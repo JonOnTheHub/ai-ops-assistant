@@ -1,6 +1,6 @@
-import VoyageAI from "voyageai";
+import { VoyageAIClient } from "voyageai";
 
-const voyage = new VoyageAI({ apiKey: process.env.VOYAGE_API_KEY! });
+const voyage = new VoyageAIClient({ apiKey: process.env.VOYAGE_API_KEY! });
 
 export async function embed(text: string): Promise<number[]> {
     const response = await voyage.embed({
