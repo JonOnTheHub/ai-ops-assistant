@@ -9,10 +9,13 @@ export async function sendEmail(args: {
     body: string;
 }): Promise<ToolResult> {
     try {
+        const isDev = process.env.NODE_ENV === "development";
+        const to = isDev ? process.env.RESEND_DEV_EMAIL! : args.to;
+
         const { data, error } = await resend.emails.send({
             from: process.env.RESEND_FROM_EMAIL!,
-            to: args.to,
-            subject: args.subject,
+            to,
+            subject: isDev ? `[DEV → ${args.to}] ${args.subject}` : args.subject,
             text: args.body,
         });
 

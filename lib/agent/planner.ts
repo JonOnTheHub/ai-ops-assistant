@@ -24,17 +24,54 @@ Rules:
 - Be concise and professional`;
 
 export type PlannerOutput =
-  | {
-      type: "tool_call";
-      toolName: ToolName;
-      args: Record<string, unknown>;
-      traceLatency: number;
+    | {
+        type: "tool_call";
+        toolName: ToolName;
+        args: Record<string, unknown>;
+        traceLatency: number;
     }
-  | {
-      type: "direct_response";
-      content: string;
-      traceLatency: number;
+    | {
+        type: "direct_response";
+        content: string;
+        traceLatency: number;
     };
+
+async function callGroq(
+    messages: Groq.Chat.ChatCompletionMessageParam[],
+    toolChoice: "auto" | "required"
+) {
+    return groq.chat.completions.create({
+        model: "llama-3.3-70b-versatile",
+        messages,
+        tools: getGroqTools(),
+        tool_choice: toolChoice,
+        max_tokens: 1024,
+    });
+}
+
+function extractToolCall(choice: Groq.Chat.ChatCompletion.Choice) {
+    if (
+        choice.finish_reason === "tool_calls" &&
+        choice.message.tool_calls?.[0]
+    ) {
+        const toolCall = choice.message.tool_calls[0];
+        return {
+            toolName: toolCall.function.name as ToolName,
+            args: JSON.parse(toolCall.function.arguments) as Record<string, unknown>,
+        };
+    }
+    return null;
+}
+
+function looksLikeRawToolCall(content: string): boolean {
+    return (
+        content.includes("<function(") ||
+        content.includes('{"to":') ||
+        content.includes('{"query":') ||
+        content.includes('{"name":') ||
+        content.includes('{"title":')
+    );
+}
 
 export async function runPlanner(
     userMessage: string,
@@ -43,74 +80,91 @@ export async function runPlanner(
 ): Promise<PlannerOutput> {
     const start = Date.now();
 
-    // Recall relevant long-term memory for this query
     const memories = await recallLongTermMemory(userMessage);
 
     const memoryBlock =
         memories.length > 0
-            ? `\n\nRelevant memory from past conversations:\n${memories.map((m) => `- ${m}`).join("\n")}`
+            ? `\n\nRelevant memory from past conversations:\n${memories
+                .map((m) => `- ${m}`)
+                .join("\n")}`
             : "";
 
-    // Build message list for Groq
     const messages: Groq.Chat.ChatCompletionMessageParam[] = [
-        {
-            role: "system",
-            content: SYSTEM_PROMPT + memoryBlock,
-        },
+        { role: "system", content: SYSTEM_PROMPT + memoryBlock },
         ...history.map((m) => ({
             role: m.role as "user" | "assistant",
             content: m.content,
         })),
-        {
-            role: "user",
-            content: userMessage,
-        },
+        { role: "user", content: userMessage },
     ];
 
-    const response = await groq.chat.completions.create({
-        model: "llama-3.3-70b-versatile",
-        messages,
-        tools: getGroqTools(),
-        tool_choice: "auto",
-        max_tokens: 1024,
-    });
-
-    const latency_ms = Date.now() - start;
+    // First pass — auto tool choice
+    const response = await callGroq(messages, "auto");
     const choice = response.choices[0];
+    const tool = extractToolCall(choice);
 
-    // Model decided to call a tool
-    if (
-        choice.finish_reason === "tool_calls" &&
-        choice.message.tool_calls?.[0]
-    ) {
-        const toolCall = choice.message.tool_calls[0];
-        const toolName = toolCall.function.name as ToolName;
-        const args = JSON.parse(toolCall.function.arguments);
-
+    if (tool) {
         await writeTrace({
             trace_id,
             step: "plan",
-            tool_name: toolName,
+            tool_name: tool.toolName,
             input: { userMessage, memoryCount: memories.length },
-            output: { toolName, args },
+            output: { toolName: tool.toolName, args: tool.args },
             status: "success",
-            latency_ms,
+            latency_ms: Date.now() - start,
         });
 
-        return { type: "tool_call", toolName, args, traceLatency: latency_ms };
+        return {
+            type: "tool_call",
+            toolName: tool.toolName,
+            args: tool.args,
+            traceLatency: Date.now() - start,
+        };
     }
 
-    // Model decided to respond directly (no tool needed)
     const content = choice.message.content ?? "";
 
+    // Second pass — model leaked tool JSON as text, force it properly
+    if (looksLikeRawToolCall(content)) {
+        console.warn("[planner] raw tool call in text — retrying with tool_choice: required");
+
+        const retryResponse = await callGroq(messages, "required");
+        const retryChoice = retryResponse.choices[0];
+        const retryTool = extractToolCall(retryChoice);
+
+        if (retryTool) {
+            await writeTrace({
+                trace_id,
+                step: "plan",
+                tool_name: retryTool.toolName,
+                input: { userMessage, memoryCount: memories.length, retried: true },
+                output: { toolName: retryTool.toolName, args: retryTool.args },
+                status: "success",
+                latency_ms: Date.now() - start,
+            });
+
+            return {
+                type: "tool_call",
+                toolName: retryTool.toolName,
+                args: retryTool.args,
+                traceLatency: Date.now() - start,
+            };
+        }
+    }
+
+    // Direct response — model has no tool to call
     await writeTrace({
         trace_id,
         step: "plan",
         input: { userMessage, memoryCount: memories.length },
         output: { direct_response: true },
         status: "success",
-        latency_ms,
+        latency_ms: Date.now() - start,
     });
 
-    return { type: "direct_response", content, traceLatency: latency_ms };
+    return {
+        type: "direct_response",
+        content,
+        traceLatency: Date.now() - start,
+    };
 }
