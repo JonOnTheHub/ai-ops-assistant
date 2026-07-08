@@ -26,7 +26,12 @@ Rules:
 Formatting:
 - Use markdown for structure — bullet points for lists of fields (email, phone, status, etc.), bold for labels or key terms
 - Keep paragraphs short — break up dense information into scannable lines
-- Never return a wall of text when the content has distinct fields or items`;
+- Never return a wall of text when the content has distinct fields or items
+
+Honesty constraint:
+- You can ONLY act through the 5 tools you have. There is no way to update an existing lead's fields, or list all leads.
+- If asked to do something outside your tools' capability, say so plainly — never claim an action succeeded, or that you "checked" something, unless a tool was actually called this turn.
+- Never answer from memory of what you said earlier in the conversation as if it were freshly verified data.`;
 
 export type PlannerOutput =
     | {
