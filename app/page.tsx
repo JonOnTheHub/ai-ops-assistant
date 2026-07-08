@@ -13,6 +13,7 @@ import {
   ClockCounterClockwise,
   ArrowClockwise,
 } from "@phosphor-icons/react";
+import ReactMarkdown from "react-markdown";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -538,15 +539,21 @@ export default function Home() {
                         : "bg-zinc-900 border border-zinc-800 text-zinc-200 rounded-tl-sm"
                       }`}
                   >
-                    {msg.content || (
-                      streamingId === msg.id ? (
-                        <motion.span
-                          animate={{ opacity: [1, 0] }}
-                          transition={{ duration: 0.6, repeat: Infinity }}
-                          className="inline-block w-2 h-4 bg-emerald-400 rounded-sm"
-                        />
-                      ) : null
-                    )}
+                    {msg.content ? (
+                      msg.role === "user" ? (
+                        msg.content
+                      ) : (
+                        <div className="prose-chat">
+                          <ReactMarkdown>{msg.content}</ReactMarkdown>
+                        </div>
+                      )
+                    ) : streamingId === msg.id ? (
+                      <motion.span
+                        animate={{ opacity: [1, 0] }}
+                        transition={{ duration: 0.6, repeat: Infinity }}
+                        className="inline-block w-2 h-4 bg-emerald-400 rounded-sm"
+                      />
+                    ) : null}
                   </div>
 
                   {msg.role === "user" && (

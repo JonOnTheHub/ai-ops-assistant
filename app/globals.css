@@ -22,3 +22,39 @@ body {
   background: #27272a;
   border-radius: 999px;
 }
+
+.prose-chat {
+  font-size: 0.875rem;
+  line-height: 1.6;
+}
+
+.prose-chat p {
+  margin: 0 0 0.5rem 0;
+}
+
+.prose-chat p:last-child {
+  margin-bottom: 0;
+}
+
+.prose-chat ul,
+.prose-chat ol {
+  margin: 0.5rem 0;
+  padding-left: 1.25rem;
+}
+
+.prose-chat li {
+  margin: 0.25rem 0;
+}
+
+.prose-chat strong {
+  color: #e4e4e7;
+  font-weight: 600;
+}
+
+.prose-chat code {
+  background: #18181b;
+  padding: 0.1rem 0.35rem;
+  border-radius: 0.25rem;
+  font-size: 0.8rem;
+  font-family: var(--font-geist-mono);
+}

@@ -104,8 +104,10 @@ export async function POST(req: NextRequest) {
 
                 const systemPrompt =
                     plan.type === "direct_response" && plan.content
-                        ? null // planner already has a response, stream it directly
+                        ? null
                         : `You are an AI Operations Assistant. Based on the tool result below, give a clear, concise response to the user. Do not mention internal tool names or JSON in your response — speak naturally.
+
+Format with markdown: use bullet points for distinct fields (email, phone, status), bold for labels. Keep it scannable, not a paragraph wall.
 
 Tool result:
 ${toolContext}`;
