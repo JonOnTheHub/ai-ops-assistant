@@ -432,10 +432,10 @@ export default function Home() {
           </div>
           <div>
             <div className="text-sm font-medium text-zinc-100 tracking-tight">
-              AI Ops Assistant
+              Warrant
             </div>
             <div className="text-[10px] text-zinc-600 font-mono">
-              RAG · Tools · Memory · Tracing
+              Every action, warranted.
             </div>
           </div>
         </div>
@@ -612,7 +612,7 @@ export default function Home() {
               </span>
               {streaming && (
                 <span className="text-[10px] text-zinc-600 font-mono">
-                  trace:{" "}
+                  case:{" "}
                   {CONVERSATION_ID.slice(0, 8)}...
                 </span>
               )}
