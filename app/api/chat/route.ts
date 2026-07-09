@@ -17,6 +17,17 @@ const supabase = createClient(
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+
+async function fetchFullTrace(trace_id: string) {
+    const { data } = await supabase
+        .from("trace_logs")
+        .select("*")
+        .eq("trace_id", trace_id)
+        .order("created_at", { ascending: true });
+
+    return data ?? [];
+}
+
 export async function POST(req: NextRequest) {
     const body: AgentRequest = await req.json();
     const { message, conversation_id, conversation_history } = body;
@@ -78,6 +89,10 @@ export async function POST(req: NextRequest) {
                             latency_ms: 0,
                         });
 
+                        const fullTrace = await fetchFullTrace(trace_id);
+                        send({ type: "trace_batch", trace_id, userMessage: message, steps: fullTrace });
+
+                        send({ type: "done", trace_id });
                         controller.close();
                         return;
                     }
@@ -115,9 +130,7 @@ ${toolContext}`;
                 // If planner returned a direct response (no tool), stream that content
                 // Otherwise stream a synthesis of the tool result
                 const contentToStream =
-                    plan.type === "direct_response"
-                        ? plan.content
-                        : null;
+                    plan.type === "direct_response" ? plan.content : null;
 
                 if (contentToStream) {
                     // Stream the planner's direct response token by token
@@ -150,11 +163,18 @@ ${toolContext}`;
                 await writeTrace({
                     trace_id,
                     step: "final_response",
-                    input: { message, toolUsed: plan.type === "tool_call" ? plan.toolName : null },
+                    input: {
+                        message,
+                        toolUsed: plan.type === "tool_call" ? plan.toolName : null,
+                    },
                     output: { streamed: true },
                     status: "success",
                     latency_ms: finalLatency,
                 });
+
+                // ← this was missing on the completion path — the actual bug
+                const fullTrace = await fetchFullTrace(trace_id);
+                send({ type: "trace_batch", trace_id, userMessage: message, steps: fullTrace });
 
                 send({ type: "done", trace_id });
                 controller.close();

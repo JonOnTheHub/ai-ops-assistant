@@ -5,8 +5,8 @@
 }
 
 body {
-  background: #09090b;
-  color: #e4e4e7;
+  background: #000000;
+  color: #e5e5e5;
   -webkit-font-smoothing: antialiased;
 }
 
@@ -19,8 +19,19 @@ body {
 }
 
 ::-webkit-scrollbar-thumb {
-  background: #27272a;
-  border-radius: 999px;
+  background: #262626;
+}
+
+/* Wasp hazard stripe — used only on the approval card and pending trace steps.
+   Reserved for the one real signal: an action is waiting on a human decision. */
+.hazard-stripes {
+  background-image: repeating-linear-gradient(
+    135deg,
+    #facc15 0px,
+    #facc15 10px,
+    #000000 10px,
+    #000000 20px
+  );
 }
 
 .prose-chat {
@@ -47,14 +58,15 @@ body {
 }
 
 .prose-chat strong {
-  color: #e4e4e7;
-  font-weight: 600;
+  color: #facc15;
+  font-weight: 700;
 }
 
 .prose-chat code {
-  background: #18181b;
+  background: #0a0a0a;
+  border: 1px solid #262626;
   padding: 0.1rem 0.35rem;
-  border-radius: 0.25rem;
   font-size: 0.8rem;
   font-family: var(--font-geist-mono);
+  color: #facc15;
 }

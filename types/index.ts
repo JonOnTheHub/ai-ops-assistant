@@ -17,6 +17,7 @@ export type TraceStep =
 
 export type TraceStatus = "success" | "error" | "pending_approval";
 
+
 export interface TraceEntry {
     trace_id: string;
     step: TraceStep;
@@ -25,6 +26,18 @@ export interface TraceEntry {
     output?: Record<string, unknown>;
     status: TraceStatus;
     latency_ms: number;
+}
+
+export interface TraceLogRow {
+    id: string;
+    trace_id: string;
+    step: TraceStep;
+    tool_name: ToolName | null;
+    input: Record<string, unknown> | null;
+    output: Record<string, unknown> | null;
+    status: TraceStatus;
+    latency_ms: number;
+    created_at: string;
 }
 
 export interface ToolDefinition {
@@ -61,3 +74,4 @@ export interface PendingAction {
     status: "pending" | "approved" | "rejected";
     created_at: string;
 }
+

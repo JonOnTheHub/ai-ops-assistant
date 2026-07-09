@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef, useEffect, useCallback } from "react";
+import { useState, useRef, useEffect, useCallback, type ElementType, type KeyboardEvent } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   PaperPlaneTilt,
@@ -12,6 +12,12 @@ import {
   BookOpen,
   ClockCounterClockwise,
   ArrowClockwise,
+  Brain,
+  ShieldCheck,
+  Wrench,
+  ChatCircleDots,
+  CaretDown,
+  ListMagnifyingGlass,
 } from "@phosphor-icons/react";
 import ReactMarkdown from "react-markdown";
 
@@ -34,6 +40,29 @@ interface PendingAction {
   message: string;
 }
 
+interface TraceLogRow {
+  id: string;
+  trace_id: string;
+  step: "plan" | "permission_check" | "tool_call" | "final_response";
+  tool_name: string | null;
+  input: Record<string, unknown> | null;
+  output: Record<string, unknown> | null;
+  status: "success" | "error" | "pending_approval";
+  latency_ms: number;
+  created_at: string;
+}
+
+interface TraceTurn {
+  trace_id: string;
+  userMessage: string;
+  steps: TraceLogRow[];
+}
+
+interface StepConfigEntry {
+  icon: ElementType;
+  label: string;
+}
+
 type ApprovalStatus = "idle" | "approving" | "rejecting" | "done";
 
 // ─── Constants ────────────────────────────────────────────────────────────────
@@ -51,12 +80,12 @@ function StatusPill({ text }: { text: string }) {
       initial={{ opacity: 0, y: 4 }}
       animate={{ opacity: 1, y: 0 }}
       exit={{ opacity: 0, y: -4 }}
-      className="flex items-center gap-2 text-xs text-zinc-500 px-1"
+      className="flex items-center gap-2 text-xs text-neutral-500 px-1 font-mono uppercase tracking-wider"
     >
       <motion.span
         animate={{ opacity: [1, 0.3, 1] }}
         transition={{ duration: 1.2, repeat: Infinity }}
-        className="inline-block w-1.5 h-1.5 rounded-full bg-emerald-400"
+        className="inline-block w-1.5 h-1.5 bg-yellow-400"
       />
       {text}
     </motion.div>
@@ -71,28 +100,49 @@ function ApprovalCard({
   onResolve: (id: string, decision: "approve" | "reject") => void;
 }) {
   const [status, setStatus] = useState<ApprovalStatus>("idle");
-  const [pendingStatus, setPendingStatus] = useState<"approved" | "rejected" | null>(null);
+  const [pendingStatus, setPendingStatus] = useState<"approved" | "rejected" | "failed" | null>(null);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
   const handle = async (decision: "approve" | "reject") => {
     setStatus(decision === "approve" ? "approving" : "rejecting");
+    setErrorMessage(null);
 
-    const res = await fetch(`/api/actions/${action.id}`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ action: decision }),
-    });
+    try {
+      const res = await fetch(`/api/actions/${action.id}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: decision }),
+      });
 
-    const data = await res.json();
+      const data = await res.json();
 
-    setPendingStatus(decision === "approve" ? "approved" : "rejected");
-    setStatus("done");
+      if (decision === "reject") {
+        setPendingStatus("rejected");
+        setStatus("done");
+        setTimeout(() => onResolve(action.id, decision), 1200);
+        return;
+      }
 
-    if (decision === "approve" && data.result?.data?.email_id) {
-      setTimeout(() => onResolve(action.id, decision), 2500);
-    } else if (decision === "reject") {
-      setTimeout(() => onResolve(action.id, decision), 1000);
-    } else {
-      setTimeout(() => onResolve(action.id, decision), 1500);
+      // decision === "approve" — verify the tool actually succeeded,
+      // not just that the HTTP request completed
+      const toolSucceeded = res.ok && data.success && data.result?.success;
+
+      if (toolSucceeded) {
+        setPendingStatus("approved");
+        setStatus("done");
+        setTimeout(() => onResolve(action.id, decision), 2500);
+      } else {
+        setPendingStatus("failed");
+        setErrorMessage(
+          data.result?.error || data.error || "Unknown error — check the trace log."
+        );
+        setStatus("done");
+        // no auto-dismiss on failure — the person needs to see this
+      }
+    } catch {
+      setPendingStatus("failed");
+      setErrorMessage("Network error — the action may not have been recorded.");
+      setStatus("done");
     }
   };
 
@@ -104,71 +154,108 @@ function ApprovalCard({
       initial={{ opacity: 0, y: 8 }}
       animate={{ opacity: 1, y: 0 }}
       exit={{ opacity: 0, scale: 0.97 }}
-      className="border border-amber-500/30 bg-amber-500/5 rounded-xl p-4 space-y-3"
+      className={`border-2 bg-black overflow-hidden ${pendingStatus === "failed" ? "border-red-600" : "border-yellow-400"
+        }`}
     >
-      <div className="flex items-center gap-2">
-        <Lightning size={14} className="text-amber-400" weight="fill" />
-        <span className="text-xs font-medium text-amber-400 uppercase tracking-wider">
-          Approval Required
-        </span>
-      </div>
+      {/* Hazard stripe — the one place in the system where crossing the line costs something */}
+      {pendingStatus !== "failed" && <div className="hazard-stripes h-2 w-full" />}
+      {pendingStatus === "failed" && <div className="h-2 w-full bg-red-600" />}
 
-      <div className="space-y-1 text-sm">
-        <div className="text-zinc-400">
-          <span className="text-zinc-500">Tool: </span>
-          <span className="font-mono text-zinc-300">{action.toolName}</span>
+      <div className="p-4 space-y-3">
+        <div className="flex items-center gap-2">
+          <Lightning size={14} className="text-yellow-400" weight="fill" />
+          <span className="text-xs font-bold text-yellow-400 uppercase tracking-widest font-mono">
+            Approval Required
+          </span>
         </div>
-        {args.to && (
-          <div className="text-zinc-400">
-            <span className="text-zinc-500">To: </span>
-            <span className="text-zinc-300">{args.to}</span>
+
+        <div className="space-y-1.5 text-sm font-mono">
+          <div className="text-neutral-400">
+            <span className="text-neutral-600 uppercase text-[10px] tracking-wider">Tool </span>
+            <span className="text-neutral-200">{action.toolName}</span>
           </div>
-        )}
-        {args.subject && (
-          <div className="text-zinc-400">
-            <span className="text-zinc-500">Subject: </span>
-            <span className="text-zinc-300">{args.subject}</span>
-          </div>
-        )}
-        {args.body && (
-          <div className="text-zinc-500 text-xs font-mono bg-zinc-900 rounded-lg p-3 leading-relaxed border border-zinc-800">
-            {args.body}
+          {args.to && (
+            <div className="text-neutral-400">
+              <span className="text-neutral-600 uppercase text-[10px] tracking-wider">To </span>
+              <span className="text-neutral-200">{args.to}</span>
+            </div>
+          )}
+          {args.subject && (
+            <div className="text-neutral-400">
+              <span className="text-neutral-600 uppercase text-[10px] tracking-wider">Subject </span>
+              <span className="text-neutral-200">{args.subject}</span>
+            </div>
+          )}
+          {args.body && (
+            <div className="text-neutral-400 text-xs bg-neutral-950 p-3 leading-relaxed border border-neutral-800 mt-2">
+              {args.body}
+            </div>
+          )}
+        </div>
+
+        {status === "done" ? (
+          <motion.div
+            initial={{ opacity: 0, y: 4 }}
+            animate={{ opacity: 1, y: 0 }}
+            className="space-y-2"
+          >
+            <div
+              className={`flex items-center gap-2 text-xs font-mono uppercase tracking-wider ${pendingStatus === "approved"
+                  ? "text-yellow-400"
+                  : pendingStatus === "failed"
+                    ? "text-red-500"
+                    : "text-neutral-500"
+                }`}
+            >
+              {pendingStatus === "failed" ? (
+                <XCircle size={13} weight="fill" />
+              ) : (
+                <CheckCircle size={13} weight="fill" />
+              )}
+              {pendingStatus === "approved"
+                ? "Email sent successfully."
+                : pendingStatus === "failed"
+                  ? "Send failed."
+                  : "Action rejected."}
+            </div>
+
+            {pendingStatus === "failed" && (
+              <>
+                {errorMessage && (
+                  <div className="text-[10px] text-red-400/80 font-mono bg-red-950/30 border border-red-900 p-2 leading-relaxed">
+                    {errorMessage}
+                  </div>
+                )}
+                <button
+                  onClick={() => onResolve(action.id, "approve")}
+                  className="text-[10px] text-neutral-500 hover:text-neutral-300 font-mono uppercase tracking-wider underline underline-offset-2"
+                >
+                  Dismiss
+                </button>
+              </>
+            )}
+          </motion.div>
+        ) : (
+          <div className="flex gap-2">
+            <button
+              onClick={() => handle("approve")}
+              disabled={status !== "idle"}
+              className="flex items-center gap-1.5 px-3 py-1.5 bg-yellow-400 border-2 border-yellow-400 text-black text-xs font-bold uppercase tracking-wider hover:bg-yellow-300 active:scale-[0.98] transition-all disabled:opacity-50 font-mono"
+            >
+              <CheckCircle size={13} weight="fill" />
+              {status === "approving" ? "Sending..." : "Approve"}
+            </button>
+            <button
+              onClick={() => handle("reject")}
+              disabled={status !== "idle"}
+              className="flex items-center gap-1.5 px-3 py-1.5 bg-black border-2 border-neutral-700 text-neutral-400 text-xs font-bold uppercase tracking-wider hover:border-neutral-500 hover:text-neutral-200 active:scale-[0.98] transition-all disabled:opacity-50 font-mono"
+            >
+              <XCircle size={13} weight="fill" />
+              {status === "rejecting" ? "Rejecting..." : "Reject"}
+            </button>
           </div>
         )}
       </div>
-
-      {status === "done" ? (
-        <motion.div
-          initial={{ opacity: 0, y: 4 }}
-          animate={{ opacity: 1, y: 0 }}
-          className={`flex items-center gap-2 text-xs ${pendingStatus === "approved" ? "text-emerald-400" : "text-zinc-500"
-            }`}
-        >
-          <CheckCircle size={13} weight="fill" />
-          {pendingStatus === "approved"
-            ? "Email sent successfully."
-            : "Action rejected."}
-        </motion.div>
-      ) : (
-        <div className="flex gap-2">
-          <button
-            onClick={() => handle("approve")}
-            disabled={status !== "idle"}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 text-xs font-medium hover:bg-emerald-500/20 active:scale-[0.98] transition-all disabled:opacity-50"
-          >
-            <CheckCircle size={13} weight="fill" />
-            {status === "approving" ? "Sending..." : "Approve"}
-          </button>
-          <button
-            onClick={() => handle("reject")}
-            disabled={status !== "idle"}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-zinc-800 border border-zinc-700 text-zinc-400 text-xs font-medium hover:bg-zinc-700 active:scale-[0.98] transition-all disabled:opacity-50"
-          >
-            <XCircle size={13} weight="fill" />
-            {status === "rejecting" ? "Rejecting..." : "Reject"}
-          </button>
-        </div>
-      )}
     </motion.div>
   );
 }
@@ -203,49 +290,49 @@ function KnowledgePanel({ onClose }: { onClose: () => void }) {
       initial={{ opacity: 0, x: 20 }}
       animate={{ opacity: 1, x: 0 }}
       exit={{ opacity: 0, x: 20 }}
-      className="absolute inset-0 bg-zinc-950 z-10 flex flex-col"
+      className="absolute inset-0 bg-black z-10 flex flex-col min-h-0"
     >
-      <div className="flex items-center justify-between p-4 border-b border-zinc-800">
+      <div className="flex items-center justify-between p-4 border-b-2 border-neutral-800 shrink-0">
         <div className="flex items-center gap-2">
-          <BookOpen size={15} className="text-zinc-400" />
-          <span className="text-sm font-medium text-zinc-300">
+          <BookOpen size={15} className="text-yellow-400" />
+          <span className="text-sm font-bold text-neutral-200 uppercase tracking-wider font-mono">
             Upload to Knowledge Base
           </span>
         </div>
         <button
           onClick={onClose}
-          className="text-xs text-zinc-500 hover:text-zinc-300 transition-colors"
+          className="text-xs text-neutral-500 hover:text-yellow-400 transition-colors font-mono uppercase tracking-wider"
         >
           Close
         </button>
       </div>
 
-      <div className="flex-1 p-4 space-y-3 overflow-y-auto">
+      <div className="flex-1 min-h-0 overflow-y-auto p-4 space-y-3">
         <div className="space-y-1.5">
-          <label className="text-xs text-zinc-500">Source name</label>
+          <label className="text-xs text-neutral-600 font-mono uppercase tracking-wider">Source name</label>
           <input
             value={source}
             onChange={(e) => setSource(e.target.value)}
             placeholder="e.g. pricing-policy.md"
-            className="w-full bg-zinc-900 border border-zinc-800 rounded-lg px-3 py-2 text-sm text-zinc-200 placeholder-zinc-600 focus:outline-none focus:border-zinc-600 transition-colors"
+            className="w-full bg-neutral-950 border-2 border-neutral-800 px-3 py-2 text-sm text-neutral-200 placeholder-neutral-700 focus:outline-none focus:border-yellow-400 transition-colors font-mono"
           />
         </div>
 
         <div className="space-y-1.5">
-          <label className="text-xs text-zinc-500">Content</label>
+          <label className="text-xs text-neutral-600 font-mono uppercase tracking-wider">Content</label>
           <textarea
             value={content}
             onChange={(e) => setContent(e.target.value)}
             placeholder="Paste document content here..."
             rows={10}
-            className="w-full bg-zinc-900 border border-zinc-800 rounded-lg px-3 py-2 text-sm text-zinc-200 placeholder-zinc-600 focus:outline-none focus:border-zinc-600 transition-colors resize-none font-mono leading-relaxed"
+            className="w-full bg-neutral-950 border-2 border-neutral-800 px-3 py-2 text-sm text-neutral-200 placeholder-neutral-700 focus:outline-none focus:border-yellow-400 transition-colors resize-none font-mono leading-relaxed"
           />
         </div>
 
         <button
           onClick={upload}
           disabled={status === "loading" || !content.trim() || !source.trim()}
-          className="w-full py-2 rounded-lg bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 text-sm font-medium hover:bg-emerald-500/20 active:scale-[0.98] transition-all disabled:opacity-40"
+          className="w-full py-2 bg-yellow-400 border-2 border-yellow-400 text-black text-sm font-bold uppercase tracking-wider hover:bg-yellow-300 active:scale-[0.98] transition-all disabled:opacity-40 font-mono"
         >
           {status === "loading"
             ? "Uploading..."
@@ -260,6 +347,153 @@ function KnowledgePanel({ onClose }: { onClose: () => void }) {
   );
 }
 
+const STEP_CONFIG: Record<string, StepConfigEntry> = {
+  plan: { icon: Brain, label: "Plan" },
+  permission_check: { icon: ShieldCheck, label: "Permission" },
+  tool_call: { icon: Wrench, label: "Tool Call" },
+  final_response: { icon: ChatCircleDots, label: "Response" },
+};
+
+const STATUS_COLOR: Record<string, string> = {
+  success: "text-yellow-400 border-neutral-800",
+  error: "text-red-500 border-red-900",
+  pending_approval: "text-yellow-400 border-yellow-400",
+};
+
+function StepRow({ step }: { step: TraceLogRow }) {
+  const [expanded, setExpanded] = useState(false);
+  const config = STEP_CONFIG[step.step] ?? { icon: Wrench, label: step.step };
+  const Icon = config.icon;
+  const colorClass = STATUS_COLOR[step.status] ?? STATUS_COLOR.success;
+  const isPending = step.status === "pending_approval";
+
+  return (
+    <div className={`border ${colorClass} bg-neutral-950 overflow-hidden`}>
+      {isPending && <div className="hazard-stripes h-1 w-full" />}
+      <button
+        onClick={() => setExpanded((v) => !v)}
+        className="w-full flex items-center justify-between px-3 py-2 text-left"
+      >
+        <div className="flex items-center gap-2 min-w-0">
+          <Icon size={13} weight="fill" />
+          <span className="text-xs font-medium truncate font-mono uppercase tracking-wide">
+            {config.label}
+            {step.tool_name ? (
+              <span className="opacity-60 normal-case ml-1">
+                · {step.tool_name}
+              </span>
+            ) : null}
+          </span>
+        </div>
+        <div className="flex items-center gap-2 shrink-0">
+          <span className="text-[10px] font-mono opacity-60">
+            {step.latency_ms}ms
+          </span>
+          <motion.div animate={{ rotate: expanded ? 180 : 0 }}>
+            <CaretDown size={11} />
+          </motion.div>
+        </div>
+      </button>
+
+      <AnimatePresence>
+        {expanded && (
+          <motion.div
+            initial={{ height: 0, opacity: 0 }}
+            animate={{ height: "auto", opacity: 1 }}
+            exit={{ height: 0, opacity: 0 }}
+            className="overflow-hidden"
+          >
+            <div className="px-3 pb-3 space-y-2">
+              {step.input && (
+                <div>
+                  <div className="text-[10px] opacity-50 mb-1 uppercase tracking-wider font-mono">Input</div>
+                  <pre className="text-[10px] font-mono bg-black border border-neutral-900 p-2 overflow-x-auto max-h-32 overflow-y-auto text-neutral-400">
+                    {JSON.stringify(step.input, null, 2)}
+                  </pre>
+                </div>
+              )}
+              {step.output && (
+                <div>
+                  <div className="text-[10px] opacity-50 mb-1 uppercase tracking-wider font-mono">Output</div>
+                  <pre className="text-[10px] font-mono bg-black border border-neutral-900 p-2 overflow-x-auto max-h-32 overflow-y-auto text-neutral-400">
+                    {JSON.stringify(step.output, null, 2)}
+                  </pre>
+                </div>
+              )}
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </div>
+  );
+}
+
+function TracePanel({
+  turns,
+  onClear,
+}: {
+  turns: TraceTurn[];
+  onClear: () => void;
+}) {
+  return (
+    <div className="w-[380px] h-full min-h-0 flex flex-col bg-black">
+      <div className="flex items-center justify-between p-4 border-b-2 border-neutral-800 shrink-0">
+        <div className="flex items-center gap-2">
+          <ListMagnifyingGlass size={14} className="text-yellow-400" />
+          <span className="text-sm font-bold text-neutral-200 uppercase tracking-wider font-mono">
+            Execution Trace
+          </span>
+        </div>
+        {turns.length > 0 && (
+          <button
+            onClick={onClear}
+            className="text-[10px] text-neutral-600 hover:text-yellow-400 transition-colors font-mono uppercase tracking-wider"
+          >
+            Clear
+          </button>
+        )}
+      </div>
+
+      <div className="flex-1 min-h-0 overflow-y-auto p-4 space-y-4">
+        {turns.length === 0 ? (
+          <div className="flex flex-col items-center justify-center h-full text-center space-y-2 opacity-60">
+            <ListMagnifyingGlass size={20} className="text-neutral-700" />
+            <div className="text-xs text-neutral-600 max-w-[220px] leading-relaxed font-mono">
+              Send a message and watch every decision the agent makes, live.
+            </div>
+          </div>
+        ) : (
+          [...turns].reverse().map((turn, i) => (
+            <motion.div
+              key={turn.trace_id}
+              initial={{ opacity: 0, y: 8 }}
+              animate={{ opacity: 1, y: 0 }}
+              className="space-y-2"
+            >
+              <div className="flex items-baseline justify-between">
+                <span className="text-xs text-neutral-300 font-medium truncate max-w-[240px] font-mono">
+                  {turn.userMessage}
+                </span>
+                <span className="text-[9px] font-mono text-neutral-700 shrink-0 uppercase">
+                  {turn.trace_id.slice(0, 6)}
+                </span>
+              </div>
+              <div className="space-y-1.5">
+                {turn.steps.map((step) => (
+                  <StepRow key={step.id} step={step} />
+                ))}
+              </div>
+              {i < turns.length - 1 && (
+                <div className="pt-2 border-t border-neutral-900" />
+              )}
+            </motion.div>
+          ))
+        )}
+      </div>
+    </div>
+  );
+}
+
 // ─── Main Page ─────────────────────────────────────────────────────────────────
 
 export default function Home() {
@@ -270,12 +504,13 @@ export default function Home() {
   const [statusText, setStatusText] = useState("");
   const [showKB, setShowKB] = useState(false);
   const [streamingId, setStreamingId] = useState<string | null>(null);
+  const [showTrace, setShowTrace] = useState(false);
+  const [traceTurns, setTraceTurns] = useState<TraceTurn[]>([]);
 
   const bottomRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const historyRef = useRef<ChatMessage[]>([]);
 
-  // Keep history ref in sync for sending to API
   useEffect(() => {
     historyRef.current = messages;
   }, [messages]);
@@ -307,7 +542,6 @@ export default function Home() {
     setStreaming(true);
     setStatusText("");
 
-    // Create placeholder assistant message for streaming into
     const assistantId = crypto.randomUUID();
     const assistantMsg: ChatMessage = {
       id: assistantId,
@@ -356,7 +590,6 @@ export default function Home() {
               appendToken(assistantId, event.token);
               setStatusText("");
             } else if (event.type === "pending_approval") {
-              // Remove placeholder, show approval card instead
               setMessages((prev) =>
                 prev.filter((m) => m.id !== assistantId)
               );
@@ -370,6 +603,15 @@ export default function Home() {
                 },
               ]);
               setStatusText("");
+            } else if (event.type === "trace_batch") {
+              setTraceTurns((prev) => [
+                ...prev,
+                {
+                  trace_id: event.trace_id,
+                  userMessage: event.userMessage,
+                  steps: event.steps,
+                },
+              ]);
             } else if (event.type === "done") {
               setStatusText("");
             } else if (event.type === "error") {
@@ -378,8 +620,7 @@ export default function Home() {
                   m.id === assistantId
                     ? {
                       ...m,
-                      content:
-                        event.message ?? "Something went wrong.",
+                      content: event.message ?? "Something went wrong.",
                       role: "system",
                     }
                     : m
@@ -408,7 +649,7 @@ export default function Home() {
     }
   };
 
-  const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+  const handleKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
       send();
@@ -424,18 +665,18 @@ export default function Home() {
   };
 
   return (
-    <div className="min-h-[100dvh] bg-zinc-950 text-zinc-200 flex flex-col">
+    <div className="h-[100dvh] bg-black text-neutral-200 flex flex-col min-h-0 overflow-hidden">
       {/* Header */}
-      <header className="sticky top-0 z-20 border-b border-zinc-800/40 px-4 py-3 flex items-center justify-between backdrop-blur-md bg-zinc-950/70 shadow-[0_1px_0_rgba(255,255,255,0.04),inset_0_1px_0_rgba(255,255,255,0.04)]">
+      <header className="shrink-0 border-b-4 border-yellow-400 px-4 py-3 flex items-center justify-between bg-black">
         <div className="flex items-center gap-3">
-          <div className="w-7 h-7 rounded-lg bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center">
-            <Robot size={14} className="text-emerald-400" weight="fill" />
+          <div className="w-7 h-7 bg-yellow-400 flex items-center justify-center">
+            <Robot size={14} className="text-black" weight="fill" />
           </div>
           <div>
-            <div className="text-sm font-medium text-zinc-100 tracking-tight">
+            <div className="text-sm font-bold text-neutral-100 tracking-tight font-mono uppercase">
               Warrant
             </div>
-            <div className="text-[10px] text-zinc-600 font-mono">
+            <div className="text-[10px] text-neutral-600 font-mono uppercase tracking-wider">
               Every action, warranted.
             </div>
           </div>
@@ -445,13 +686,23 @@ export default function Home() {
           <button
             onClick={backfillKB}
             title="Backfill KB embeddings"
-            className="p-1.5 rounded-lg text-zinc-600 hover:text-zinc-400 hover:bg-zinc-800 transition-all active:scale-[0.97]"
+            className="p-1.5 text-neutral-600 hover:text-yellow-400 hover:bg-neutral-900 transition-all active:scale-[0.97]"
           >
             <ArrowClockwise size={14} />
           </button>
           <button
+            onClick={() => setShowTrace((v) => !v)}
+            className={`flex items-center gap-1.5 px-2.5 py-1.5 border-2 text-xs transition-all active:scale-[0.97] font-mono uppercase tracking-wider font-bold ${showTrace
+                ? "bg-yellow-400 border-yellow-400 text-black"
+                : "bg-black border-neutral-800 text-neutral-400 hover:text-yellow-400 hover:border-neutral-600"
+              }`}
+          >
+            <ListMagnifyingGlass size={12} />
+            Trace
+          </button>
+          <button
             onClick={() => setShowKB((v) => !v)}
-            className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-zinc-800/80 border border-zinc-700/60 text-zinc-400 text-xs hover:text-zinc-200 hover:border-zinc-600 transition-all active:scale-[0.97]"
+            className="flex items-center gap-1.5 px-2.5 py-1.5 bg-black border-2 border-neutral-800 text-neutral-400 text-xs hover:text-yellow-400 hover:border-neutral-600 transition-all active:scale-[0.97] font-mono uppercase tracking-wider font-bold"
           >
             <BookOpen size={12} />
             Knowledge
@@ -460,15 +711,15 @@ export default function Home() {
       </header>
 
       {/* Body */}
-      <div className="flex-1 flex overflow-hidden">
+      <div className="flex-1 min-h-0 flex overflow-hidden">
         {/* Chat panel */}
-        <div className="flex-1 flex flex-col relative">
+        <div className="flex-1 min-h-0 flex flex-col relative">
           <AnimatePresence>
             {showKB && <KnowledgePanel onClose={() => setShowKB(false)} />}
           </AnimatePresence>
 
           {/* Messages */}
-          <div className="flex-1 overflow-y-auto px-4 py-6 space-y-6">
+          <div className="flex-1 min-h-0 overflow-y-auto px-4 py-6 space-y-6">
             <AnimatePresence initial={false}>
               {messages.length === 0 && (
                 <motion.div
@@ -478,18 +729,14 @@ export default function Home() {
                   exit={{ opacity: 0 }}
                   className="flex flex-col items-center justify-center h-full min-h-[40vh] text-center space-y-3"
                 >
-                  <div className="w-12 h-12 rounded-2xl bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center">
-                    <Robot
-                      size={22}
-                      className="text-emerald-400"
-                      weight="fill"
-                    />
+                  <div className="w-12 h-12 bg-yellow-400 flex items-center justify-center">
+                    <Robot size={22} className="text-black" weight="fill" />
                   </div>
                   <div className="space-y-1">
-                    <div className="text-sm font-medium text-zinc-300">
+                    <div className="text-sm font-bold text-neutral-200 font-mono uppercase tracking-wider">
                       Ready to assist
                     </div>
-                    <div className="text-xs text-zinc-600 max-w-[260px] leading-relaxed">
+                    <div className="text-xs text-neutral-600 max-w-[260px] leading-relaxed font-mono">
                       Ask about policies, look up customers, create tasks, or
                       draft emails.
                     </div>
@@ -507,7 +754,7 @@ export default function Home() {
                           setInput(suggestion);
                           inputRef.current?.focus();
                         }}
-                        className="text-[11px] px-3 py-1.5 rounded-full bg-zinc-800/80 border border-zinc-700/60 text-zinc-500 hover:text-zinc-300 hover:border-zinc-600 transition-all"
+                        className="text-[11px] px-3 py-1.5 bg-black border border-neutral-800 text-neutral-500 hover:text-yellow-400 hover:border-yellow-400 transition-all font-mono"
                       >
                         {suggestion}
                       </button>
@@ -526,17 +773,17 @@ export default function Home() {
                     }`}
                 >
                   {msg.role !== "user" && (
-                    <div className="w-6 h-6 rounded-lg bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center shrink-0 mt-0.5">
-                      <Robot size={11} className="text-emerald-400" weight="fill" />
+                    <div className="w-6 h-6 bg-yellow-400 flex items-center justify-center shrink-0 mt-0.5">
+                      <Robot size={11} className="text-black" weight="fill" />
                     </div>
                   )}
 
                   <div
-                    className={`max-w-[78%] rounded-2xl px-4 py-3 text-sm leading-relaxed ${msg.role === "user"
-                      ? "bg-zinc-800 text-zinc-100 rounded-tr-sm"
-                      : msg.role === "system"
-                        ? "bg-red-500/10 border border-red-500/20 text-red-400"
-                        : "bg-zinc-900 border border-zinc-800 text-zinc-200 rounded-tl-sm"
+                    className={`max-w-[78%] px-4 py-3 text-sm leading-relaxed border ${msg.role === "user"
+                        ? "bg-neutral-900 text-neutral-100 border-neutral-800"
+                        : msg.role === "system"
+                          ? "bg-red-950/40 border-red-900 text-red-400"
+                          : "bg-black border-neutral-800 text-neutral-200"
                       }`}
                   >
                     {msg.content ? (
@@ -551,27 +798,25 @@ export default function Home() {
                       <motion.span
                         animate={{ opacity: [1, 0] }}
                         transition={{ duration: 0.6, repeat: Infinity }}
-                        className="inline-block w-2 h-4 bg-emerald-400 rounded-sm"
+                        className="inline-block w-2 h-4 bg-yellow-400"
                       />
                     ) : null}
                   </div>
 
                   {msg.role === "user" && (
-                    <div className="w-6 h-6 rounded-lg bg-zinc-800 border border-zinc-700 flex items-center justify-center shrink-0 mt-0.5">
-                      <User size={11} className="text-zinc-400" />
+                    <div className="w-6 h-6 bg-neutral-900 border border-neutral-700 flex items-center justify-center shrink-0 mt-0.5">
+                      <User size={11} className="text-neutral-400" />
                     </div>
                   )}
                 </motion.div>
               ))}
 
-              {/* Approval cards */}
               {pendingActions.map((action) => (
                 <motion.div key={action.id} layout>
                   <ApprovalCard action={action} onResolve={resolveAction} />
                 </motion.div>
               ))}
 
-              {/* Status pill */}
               <AnimatePresence>
                 {statusText && <StatusPill text={statusText} />}
               </AnimatePresence>
@@ -581,7 +826,7 @@ export default function Home() {
           </div>
 
           {/* Input */}
-          <div className="border-t border-zinc-800/60 p-4">
+          <div className="border-t-2 border-neutral-800 p-4 shrink-0">
             <div className="flex gap-3 items-end">
               <div className="flex-1 relative">
                 <textarea
@@ -593,13 +838,13 @@ export default function Home() {
                   rows={1}
                   disabled={streaming}
                   style={{ resize: "none" }}
-                  className="w-full bg-zinc-900 border border-zinc-800 rounded-xl px-4 py-3 text-sm text-zinc-200 placeholder-zinc-600 focus:outline-none focus:border-zinc-700 transition-colors disabled:opacity-50 leading-relaxed"
+                  className="w-full bg-neutral-950 border-2 border-neutral-800 px-4 py-3 text-sm text-neutral-200 placeholder-neutral-700 focus:outline-none focus:border-yellow-400 transition-colors disabled:opacity-50 leading-relaxed font-mono"
                 />
               </div>
               <button
                 onClick={send}
                 disabled={streaming || !input.trim()}
-                className="p-3 rounded-xl bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 hover:bg-emerald-500/20 active:scale-[0.97] transition-all disabled:opacity-30"
+                className="p-3 bg-yellow-400 border-2 border-yellow-400 text-black hover:bg-yellow-300 active:scale-[0.97] transition-all disabled:opacity-30 disabled:bg-neutral-800 disabled:border-neutral-800 disabled:text-neutral-600"
               >
                 {streaming ? (
                   <motion.div
@@ -614,18 +859,31 @@ export default function Home() {
               </button>
             </div>
             <div className="flex items-center justify-between mt-2 px-1">
-              <span className="text-[10px] text-zinc-700">
+              <span className="text-[10px] text-neutral-700 font-mono uppercase tracking-wider">
                 Enter to send · Shift+Enter for newline
               </span>
               {streaming && (
-                <span className="text-[10px] text-zinc-600 font-mono">
-                  case:{" "}
-                  {CONVERSATION_ID.slice(0, 8)}...
+                <span className="text-[10px] text-neutral-600 font-mono uppercase">
+                  case: {CONVERSATION_ID.slice(0, 8)}...
                 </span>
               )}
             </div>
           </div>
         </div>
+
+        <AnimatePresence>
+          {showTrace && (
+            <motion.div
+              initial={{ width: 0, opacity: 0 }}
+              animate={{ width: 380, opacity: 1 }}
+              exit={{ width: 0, opacity: 0 }}
+              transition={{ type: "spring", stiffness: 300, damping: 32 }}
+              className="border-l-2 border-neutral-800 overflow-hidden shrink-0 min-h-0"
+            >
+              <TracePanel turns={traceTurns} onClear={() => setTraceTurns([])} />
+            </motion.div>
+          )}
+        </AnimatePresence>
       </div>
     </div>
   );
