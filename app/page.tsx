@@ -127,143 +127,143 @@ function ApprovalCard({
         setTimeout(() => onResolve(action.id, "rejected"), 1200);
         return;
       }
-    
+
 
       // decision === "approve" — verify the tool actually succeeded,
       // not just that the HTTP request completed
-    const toolSucceeded = res.ok && data.success && data.result?.success;
+      const toolSucceeded = res.ok && data.success && data.result?.success;
 
-    if (toolSucceeded) {
-      setPendingStatus("approved");
-      setStatus("done");
-      setTimeout(() => onResolve(action.id, "approved", `Sent to ${args.to ?? "recipient"}`), 2500);
-    } else {
+      if (toolSucceeded) {
+        setPendingStatus("approved");
+        setStatus("done");
+        setTimeout(() => onResolve(action.id, "approved", `Sent to ${args.to ?? "recipient"}`), 2500);
+      } else {
+        setPendingStatus("failed");
+        setErrorMessage(
+          data.result?.error || data.error || "Unknown error — check the trace log."
+        );
+        setStatus("done");
+        // no auto-dismiss on failure — the person needs to see this
+      }
+    } catch {
       setPendingStatus("failed");
-      setErrorMessage(
-        data.result?.error || data.error || "Unknown error — check the trace log."
-      );
+      setErrorMessage("Network error — the action may not have been recorded.");
       setStatus("done");
-      // no auto-dismiss on failure — the person needs to see this
     }
-  } catch {
-    setPendingStatus("failed");
-    setErrorMessage("Network error — the action may not have been recorded.");
-    setStatus("done");
-  }
-};
+  };
 
-const args = action.args as { to?: string; subject?: string; body?: string };
+  const args = action.args as { to?: string; subject?: string; body?: string };
 
-return (
-  <motion.div
-    layout
-    initial={{ opacity: 0, y: 8 }}
-    animate={{ opacity: 1, y: 0 }}
-    exit={{ opacity: 0, scale: 0.97 }}
-    className={`border-2 bg-black overflow-hidden ${pendingStatus === "failed" ? "border-red-600" : "border-yellow-400"
-      }`}
-  >
-    {/* Hazard stripe — the one place in the system where crossing the line costs something */}
-    {pendingStatus !== "failed" && <div className="hazard-stripes h-2 w-full" />}
-    {pendingStatus === "failed" && <div className="h-2 w-full bg-red-600" />}
+  return (
+    <motion.div
+      layout
+      initial={{ opacity: 0, y: 8 }}
+      animate={{ opacity: 1, y: 0 }}
+      exit={{ opacity: 0, scale: 0.97 }}
+      className={`rounded-xl border bg-black overflow-hidden ${pendingStatus === "failed" ? "border-red-600/50" : "border-yellow-400/50"
+        } ${pendingStatus === null ? "glow-yellow" : ""}`}
+    >
+      {/* Hazard stripe — the one place in the system where crossing the line costs something */}
+      {pendingStatus !== "failed" && <div className="hazard-stripes h-2 w-full" />}
+      {pendingStatus === "failed" && <div className="h-2 w-full bg-red-600" />}
 
-    <div className="p-4 space-y-3">
-      <div className="flex items-center gap-2">
-        <Lightning size={14} className="text-yellow-400" weight="fill" />
-        <span className="text-xs font-bold text-yellow-400 uppercase tracking-widest font-mono">
-          Approval Required
-        </span>
-      </div>
-
-      <div className="space-y-1.5 text-sm font-mono">
-        <div className="text-neutral-400">
-          <span className="text-neutral-600 uppercase text-[10px] tracking-wider">Tool </span>
-          <span className="text-neutral-200">{action.toolName}</span>
+      <div className="p-4 space-y-3">
+        <div className="flex items-center gap-2">
+          <Lightning size={14} className="text-yellow-400" weight="fill" />
+          <span className="text-xs font-bold text-yellow-400 uppercase tracking-widest font-mono">
+            Approval Required
+          </span>
         </div>
-        {args.to && (
-          <div className="text-neutral-400">
-            <span className="text-neutral-600 uppercase text-[10px] tracking-wider">To </span>
-            <span className="text-neutral-200">{args.to}</span>
-          </div>
-        )}
-        {args.subject && (
-          <div className="text-neutral-400">
-            <span className="text-neutral-600 uppercase text-[10px] tracking-wider">Subject </span>
-            <span className="text-neutral-200">{args.subject}</span>
-          </div>
-        )}
-        {args.body && (
-          <div className="text-neutral-400 text-xs bg-neutral-950 p-3 leading-relaxed border border-neutral-800 mt-2">
-            {args.body}
-          </div>
-        )}
-      </div>
 
-      {status === "done" ? (
-        <motion.div
-          initial={{ opacity: 0, y: 4 }}
-          animate={{ opacity: 1, y: 0 }}
-          className="space-y-2"
-        >
-          <div
-            className={`flex items-center gap-2 text-xs font-mono uppercase tracking-wider ${pendingStatus === "approved"
-              ? "text-yellow-400"
-              : pendingStatus === "failed"
-                ? "text-red-500"
-                : "text-neutral-500"
-              }`}
-          >
-            {pendingStatus === "failed" ? (
-              <XCircle size={13} weight="fill" />
-            ) : (
-              <CheckCircle size={13} weight="fill" />
-            )}
-            {pendingStatus === "approved"
-              ? "Email sent successfully."
-              : pendingStatus === "failed"
-                ? "Send failed."
-                : "Action rejected."}
+        <div className="space-y-1.5 text-sm font-mono">
+          <div className="text-neutral-400">
+            <span className="text-neutral-600 uppercase text-[10px] tracking-wider">Tool </span>
+            <span className="text-neutral-200">{action.toolName}</span>
           </div>
-
-          {pendingStatus === "failed" && (
-            <>
-              {errorMessage && (
-                <div className="text-[10px] text-red-400/80 font-mono bg-red-950/30 border border-red-900 p-2 leading-relaxed">
-                  {errorMessage}
-                </div>
-              )}
-              <button
-                onClick={() => onResolve(action.id, "failed", errorMessage ?? "Action failed.")}
-                className="text-[10px] text-neutral-500 hover:text-neutral-300 font-mono uppercase tracking-wider underline underline-offset-2"
-              >
-                Dismiss
-              </button>
-            </>
+          {args.to && (
+            <div className="text-neutral-400">
+              <span className="text-neutral-600 uppercase text-[10px] tracking-wider">To </span>
+              <span className="text-neutral-200">{args.to}</span>
+            </div>
           )}
-        </motion.div>
-      ) : (
-        <div className="flex gap-2">
-          <button
-            onClick={() => handle("approve")}
-            disabled={status !== "idle"}
-            className="flex items-center gap-1.5 px-3 py-1.5 bg-yellow-400 border-2 border-yellow-400 text-black text-xs font-bold uppercase tracking-wider hover:bg-yellow-300 active:scale-[0.98] transition-all disabled:opacity-50 font-mono"
-          >
-            <CheckCircle size={13} weight="fill" />
-            {status === "approving" ? "Sending..." : "Approve"}
-          </button>
-          <button
-            onClick={() => handle("reject")}
-            disabled={status !== "idle"}
-            className="flex items-center gap-1.5 px-3 py-1.5 bg-black border-2 border-neutral-700 text-neutral-400 text-xs font-bold uppercase tracking-wider hover:border-neutral-500 hover:text-neutral-200 active:scale-[0.98] transition-all disabled:opacity-50 font-mono"
-          >
-            <XCircle size={13} weight="fill" />
-            {status === "rejecting" ? "Rejecting..." : "Reject"}
-          </button>
+          {args.subject && (
+            <div className="text-neutral-400">
+              <span className="text-neutral-600 uppercase text-[10px] tracking-wider">Subject </span>
+              <span className="text-neutral-200">{args.subject}</span>
+            </div>
+          )}
+          {args.body && (
+            <div className="text-neutral-400 text-xs bg-neutral-950 p-3 leading-relaxed border border-neutral-800 mt-2">
+              {args.body}
+            </div>
+          )}
         </div>
-      )}
-    </div>
-  </motion.div>
-);
+
+        {status === "done" ? (
+          <motion.div
+            initial={{ opacity: 0, y: 4 }}
+            animate={{ opacity: 1, y: 0 }}
+            className="space-y-2"
+          >
+            <div
+              className={`flex items-center gap-2 text-xs font-mono uppercase tracking-wider ${pendingStatus === "approved"
+                ? "text-yellow-400"
+                : pendingStatus === "failed"
+                  ? "text-red-500"
+                  : "text-neutral-500"
+                }`}
+            >
+              {pendingStatus === "failed" ? (
+                <XCircle size={13} weight="fill" />
+              ) : (
+                <CheckCircle size={13} weight="fill" />
+              )}
+              {pendingStatus === "approved"
+                ? "Email sent successfully."
+                : pendingStatus === "failed"
+                  ? "Send failed."
+                  : "Action rejected."}
+            </div>
+
+            {pendingStatus === "failed" && (
+              <>
+                {errorMessage && (
+                  <div className="text-[10px] text-red-400/80 font-mono bg-red-950/30 border border-red-900 p-2 leading-relaxed">
+                    {errorMessage}
+                  </div>
+                )}
+                <button
+                  onClick={() => onResolve(action.id, "failed", errorMessage ?? "Action failed.")}
+                  className="text-[10px] text-neutral-500 hover:text-neutral-300 font-mono uppercase tracking-wider underline underline-offset-2"
+                >
+                  Dismiss
+                </button>
+              </>
+            )}
+          </motion.div>
+        ) : (
+          <div className="flex gap-2">
+            <button
+              onClick={() => handle("approve")}
+              disabled={status !== "idle"}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-yellow-400 border border-yellow-400 text-black text-xs font-bold uppercase tracking-wider hover:bg-yellow-300 active:scale-[0.98] transition-all disabled:opacity-50 font-mono"
+            >
+              <CheckCircle size={13} weight="fill" />
+              {status === "approving" ? "Sending..." : "Approve"}
+            </button>
+            <button
+              onClick={() => handle("reject")}
+              disabled={status !== "idle"}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-black border border-neutral-700/60 text-neutral-400 text-xs font-bold uppercase tracking-wider hover:border-neutral-500 hover:text-neutral-200 active:scale-[0.98] transition-all disabled:opacity-50 font-mono"
+            >
+              <XCircle size={13} weight="fill" />
+              {status === "rejecting" ? "Rejecting..." : "Reject"}
+            </button>
+          </div>
+        )}
+      </div>
+    </motion.div>
+  );
 }
 
 function KnowledgePanel({ onClose }: { onClose: () => void }) {
@@ -320,7 +320,7 @@ function KnowledgePanel({ onClose }: { onClose: () => void }) {
             value={source}
             onChange={(e) => setSource(e.target.value)}
             placeholder="e.g. pricing-policy.md"
-            className="w-full bg-neutral-950 border-2 border-neutral-800 px-3 py-2 text-sm text-neutral-200 placeholder-neutral-700 focus:outline-none focus:border-yellow-400 transition-colors font-mono"
+            className="w-full rounded-lg bg-neutral-950 border border-neutral-800/60 px-3 py-2 text-sm text-neutral-200 placeholder-neutral-700 focus:outline-none focus:border-yellow-400/60 transition-colors font-mono"
           />
         </div>
 
@@ -338,7 +338,7 @@ function KnowledgePanel({ onClose }: { onClose: () => void }) {
         <button
           onClick={upload}
           disabled={status === "loading" || !content.trim() || !source.trim()}
-          className="w-full py-2 bg-yellow-400 border-2 border-yellow-400 text-black text-sm font-bold uppercase tracking-wider hover:bg-yellow-300 active:scale-[0.98] transition-all disabled:opacity-40 font-mono"
+          className="w-full py-2 rounded-lg bg-yellow-400 border border-yellow-400 text-black text-sm font-bold uppercase tracking-wider hover:bg-yellow-300 active:scale-[0.98] transition-all disabled:opacity-40 font-mono glow-yellow"
         >
           {status === "loading"
             ? "Uploading..."
@@ -361,9 +361,9 @@ const STEP_CONFIG: Record<string, StepConfigEntry> = {
 };
 
 const STATUS_COLOR: Record<string, string> = {
-  success: "text-yellow-400 border-neutral-800",
-  error: "text-red-500 border-red-900",
-  pending_approval: "text-yellow-400 border-yellow-400",
+  success: "text-yellow-400 border-neutral-800/60",
+  error: "text-red-500 border-red-900/60",
+  pending_approval: "text-yellow-400 border-yellow-400/50",
 };
 
 function StepRow({ step }: { step: TraceLogRow }) {
@@ -374,7 +374,7 @@ function StepRow({ step }: { step: TraceLogRow }) {
   const isPending = step.status === "pending_approval";
 
   return (
-    <div className={`border ${colorClass} bg-neutral-950 overflow-hidden`}>
+    <div className={`rounded-lg border ${colorClass} bg-neutral-950 overflow-hidden`}>
       {isPending && <div className="hazard-stripes h-1 w-full" />}
       <button
         onClick={() => setExpanded((v) => !v)}
@@ -701,9 +701,9 @@ export default function Home() {
   return (
     <div className="h-[100dvh] bg-black text-neutral-200 flex flex-col min-h-0 overflow-hidden">
       {/* Header */}
-      <header className="shrink-0 border-b-4 border-yellow-400 px-4 py-3 flex items-center justify-between bg-black">
+      <header className="shrink-0 border-b border-yellow-400/30 px-4 py-3 flex items-center justify-between bg-black/80 backdrop-blur-md">
         <div className="flex items-center gap-3">
-          <div className="w-7 h-7 bg-yellow-400 flex items-center justify-center">
+          <div className="w-7 h-7 rounded-lg bg-yellow-400 flex items-center justify-center glow-yellow">
             <Robot size={14} className="text-black" weight="fill" />
           </div>
           <div>
@@ -726,9 +726,9 @@ export default function Home() {
           </button>
           <button
             onClick={() => setShowTrace((v) => !v)}
-            className={`flex items-center gap-1.5 px-2.5 py-1.5 border-2 text-xs transition-all active:scale-[0.97] font-mono uppercase tracking-wider font-bold ${showTrace
-              ? "bg-yellow-400 border-yellow-400 text-black"
-              : "bg-black border-neutral-800 text-neutral-400 hover:text-yellow-400 hover:border-neutral-600"
+            className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border text-xs transition-all active:scale-[0.97] font-mono uppercase tracking-wider font-bold ${showTrace
+              ? "bg-yellow-400 border-yellow-400/60 text-black glow-yellow"
+              : "bg-black border-neutral-800/60 text-neutral-400 hover:text-yellow-400 hover:border-yellow-400/40"
               }`}
           >
             <ListMagnifyingGlass size={12} />
@@ -736,7 +736,7 @@ export default function Home() {
           </button>
           <button
             onClick={() => setShowKB((v) => !v)}
-            className="flex items-center gap-1.5 px-2.5 py-1.5 bg-black border-2 border-neutral-800 text-neutral-400 text-xs hover:text-yellow-400 hover:border-neutral-600 transition-all active:scale-[0.97] font-mono uppercase tracking-wider font-bold"
+            className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-black border border-neutral-800/60 text-neutral-400 text-xs hover:text-yellow-400 hover:border-yellow-400/40 transition-all active:scale-[0.97] font-mono uppercase tracking-wider font-bold"
           >
             <BookOpen size={12} />
             Knowledge
@@ -763,7 +763,7 @@ export default function Home() {
                   exit={{ opacity: 0 }}
                   className="flex flex-col items-center justify-center h-full min-h-[40vh] text-center space-y-3"
                 >
-                  <div className="w-12 h-12 bg-yellow-400 flex items-center justify-center">
+                  <div className="w-12 h-12 rounded-2xl bg-yellow-400 flex items-center justify-center glow-yellow">
                     <Robot size={22} className="text-black" weight="fill" />
                   </div>
                   <div className="space-y-1">
@@ -788,7 +788,7 @@ export default function Home() {
                           setInput(suggestion);
                           inputRef.current?.focus();
                         }}
-                        className="text-[11px] px-3 py-1.5 bg-black border border-neutral-800 text-neutral-500 hover:text-yellow-400 hover:border-yellow-400 transition-all font-mono"
+                        className="text-[11px] px-3 py-1.5 rounded-full bg-black border border-neutral-800/60 text-neutral-500 hover:text-yellow-400 hover:border-yellow-400/50 transition-all font-mono"
                       >
                         {suggestion}
                       </button>
@@ -831,17 +831,17 @@ export default function Home() {
                       }`}
                   >
                     {msg.role !== "user" && (
-                      <div className="w-6 h-6 bg-yellow-400 flex items-center justify-center shrink-0 mt-0.5">
+                      <div className="w-6 h-6 rounded-lg bg-yellow-400 flex items-center justify-center shrink-0 mt-0.5">
                         <Robot size={11} className="text-black" weight="fill" />
                       </div>
                     )}
 
                     <div
-                      className={`max-w-[78%] px-4 py-3 text-sm leading-relaxed border ${msg.role === "user"
-                        ? "bg-neutral-900 text-neutral-100 border-neutral-800"
+                      className={`max-w-[78%] px-4 py-3 text-sm leading-relaxed rounded-2xl border ${msg.role === "user"
+                        ? "bg-neutral-900 text-neutral-100 border-neutral-800/60 rounded-tr-sm"
                         : msg.role === "system"
-                          ? "bg-red-950/40 border-red-900 text-red-400"
-                          : "bg-black border-neutral-800 text-neutral-200"
+                          ? "bg-red-950/30 border-red-900/50 text-red-400"
+                          : "bg-black border-neutral-800/60 text-neutral-200 rounded-tl-sm"
                         }`}
                     >
                       {msg.content ? (
@@ -862,7 +862,7 @@ export default function Home() {
                     </div>
 
                     {msg.role === "user" && (
-                      <div className="w-6 h-6 bg-neutral-900 border border-neutral-700 flex items-center justify-center shrink-0 mt-0.5">
+                      <div className="w-6 h-6 rounded-lg bg-neutral-900 border border-neutral-700/60 flex items-center justify-center shrink-0 mt-0.5">
                         <User size={11} className="text-neutral-400" />
                       </div>
                     )}
@@ -896,13 +896,13 @@ export default function Home() {
                   rows={1}
                   disabled={streaming}
                   style={{ resize: "none" }}
-                  className="w-full bg-neutral-950 border-2 border-neutral-800 px-4 py-3 text-sm text-neutral-200 placeholder-neutral-700 focus:outline-none focus:border-yellow-400 transition-colors disabled:opacity-50 leading-relaxed font-mono"
+                  className="w-full rounded-xl bg-neutral-950 border border-neutral-800/60 px-4 py-3 text-sm text-neutral-200 placeholder-neutral-700 focus:outline-none focus:border-yellow-400/60 transition-colors disabled:opacity-50 leading-relaxed font-mono"
                 />
               </div>
               <button
                 onClick={send}
                 disabled={streaming || !input.trim()}
-                className="p-3 bg-yellow-400 border-2 border-yellow-400 text-black hover:bg-yellow-300 active:scale-[0.97] transition-all disabled:opacity-30 disabled:bg-neutral-800 disabled:border-neutral-800 disabled:text-neutral-600"
+                className="p-3 rounded-xl bg-yellow-400 border border-yellow-400 text-black hover:bg-yellow-300 active:scale-[0.97] transition-all disabled:opacity-30 disabled:bg-neutral-800 disabled:border-neutral-800 disabled:text-neutral-600 glow-yellow"
               >
                 {streaming ? (
                   <motion.div
