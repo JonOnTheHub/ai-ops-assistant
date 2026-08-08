@@ -566,7 +566,7 @@ export default function Home() {
           message: text,
           conversation_id: CONVERSATION_ID,
           conversation_history: historyRef.current.map((m) => ({
-            role: m.role,
+            role: m.role === "system" ? "assistant" : m.role,
             content: m.content,
           })),
         }),
@@ -670,22 +670,37 @@ export default function Home() {
     const resolved = pendingActions.find((a) => a.id === id);
 
     if (resolved) {
+      const summaryDetail =
+        detail ??
+        (outcome === "approved"
+          ? "Action completed."
+          : outcome === "rejected"
+            ? "Rejected."
+            : "Action failed.");
+
+      const args = resolved.args as { to?: string; subject?: string };
+
+      // This becomes actual conversation history sent to the model —
+      // not just UI decoration. Without this, the model has no way to
+      // know what happened after an approval resolved.
+      const contentSummary =
+        outcome === "approved"
+          ? `[System log] ${resolved.toolName} executed successfully.${args.to ? ` Recipient: ${args.to}.` : ""
+          }${args.subject ? ` Subject: ${args.subject}.` : ""}`
+          : outcome === "rejected"
+            ? `[System log] ${resolved.toolName} was rejected by the user and did not execute.`
+            : `[System log] ${resolved.toolName} failed to execute. ${summaryDetail}`;
+
       setMessages((prev) => [
         ...prev,
         {
           id: crypto.randomUUID(),
           role: "system",
-          content: "",
+          content: contentSummary,
           resolution: {
             outcome,
             toolName: resolved.toolName,
-            detail:
-              detail ??
-              (outcome === "approved"
-                ? "Action completed."
-                : outcome === "rejected"
-                  ? "Rejected."
-                  : "Action failed."),
+            detail: summaryDetail,
           },
         },
       ]);
