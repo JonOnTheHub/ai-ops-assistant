@@ -75,15 +75,7 @@ async function callGroqWithTools(
     });
 }
 
-async function callGroqPlain(messages: Groq.Chat.ChatCompletionMessageParam[]) {
-    // No tools at all — last-resort fallback when Groq's own function-calling
-    // machinery rejects a malformed generation at the API level.
-    return groq.chat.completions.create({
-        model: "llama-3.3-70b-versatile",
-        messages,
-        max_tokens: 1024,
-    });
-}
+
 
 function extractToolCall(choice: Groq.Chat.ChatCompletion.Choice) {
     if (choice.finish_reason !== "tool_calls" || !choice.message.tool_calls?.[0]) {
@@ -162,29 +154,26 @@ export async function runPlanner(
         const response = await callGroqWithTools(messages, "auto");
         firstChoice = response.choices[0];
     } catch (err) {
-        // Groq rejected the generation at the API level (e.g. malformed
-        // <function=...> syntax). Don't crash the turn — fall back to a
-        // plain, tool-free completion.
-        console.warn("[planner] tool-enabled call failed at the API level, falling back:", err);
+        // Groq's function-calling layer failed at the API level. Retry once —
+        // this class of failure is often transient — before giving up honestly.
+        console.warn("[planner] tool-enabled call failed, retrying once:", err);
 
         try {
-            const fallback = await callGroqPlain(messages);
-            const fallbackContent =
-                fallback.choices[0]?.message.content ??
-                "I ran into an issue processing that — could you rephrase?";
-            return finish(
-                { type: "direct_response", content: fallbackContent, traceLatency: Date.now() - start },
-                { recoveredFromApiError: true }
-            );
-        } catch (fallbackErr) {
-            console.error("[planner] fallback call also failed:", fallbackErr);
+            const retryResponse = await callGroqWithTools(messages, "auto");
+            firstChoice = retryResponse.choices[0];
+        } catch (retryErr) {
+            // Do NOT fall back to a tools-free completion here — without tools,
+            // the model has no way to ground an answer in real data, and will
+            // confidently fabricate figures instead. A visible error is safer
+            // than a silent wrong answer.
+            console.error("[planner] tool-enabled call failed twice, giving up honestly:", retryErr);
             return finish(
                 {
                     type: "direct_response",
-                    content: "Something went wrong processing that — please try again.",
+                    content: "I ran into a technical issue processing that — could you try asking again?",
                     traceLatency: Date.now() - start,
                 },
-                { recoveredFromApiError: true, fallbackFailed: true }
+                { recoveredFromApiError: true, retriedAndFailed: true }
             );
         }
     }
