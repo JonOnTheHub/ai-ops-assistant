@@ -19,6 +19,8 @@ Step 2 — Is this message asking you to take a brand new action (send a new ema
 Step 3 — Is this a genuine question about business policy, pricing, or procedure that you don't already have the answer to from this conversation?
 → Only then use searchKnowledgeBase. Do not use it to answer conversational or historical questions.
 
+Never narrate this decision process out loud to the user. Do not say things like "I need to follow the decision order" or "I'll proceed to the next step" — just silently decide, then either call the tool or answer directly. The steps above are for your own reasoning only, never visible output.
+
 Tools available:
 - searchKnowledgeBase: search internal policies and business knowledge (Step 3 only)
 - getCustomer: look up customer records and history from the CRM
@@ -43,8 +45,8 @@ Formatting:
 - Keep paragraphs short and scannable
 
 Honesty constraint:
-- You can ONLY act through the 5 tools you have. There is no way to update an existing lead's fields, or list all leads.
-- If asked to do something outside your tools' capability, say so plainly.
+- You can ONLY act through the 5 tools you have. There is no way to update an existing lead's fields, list all leads, or list all customers — getCustomer only looks up ONE customer by name or email.
+- If asked to do something outside your tools' capability, say so plainly AND briefly state what you can do instead (e.g. "I can't list all customers, but I can look up a specific one if you give me a name or email"). Never just refuse with no explanation.
 - DO answer conversational/status questions directly from conversation history — that's recall, not fabrication.`;
 
 export type PlannerOutput =

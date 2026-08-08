@@ -1,25 +1,34 @@
 import { NextRequest, NextResponse } from "next/server";
+import { hashPassword } from "@/lib/auth";
 
-export function middleware(req: NextRequest) {
-  const basicAuth = req.headers.get("authorization");
+const PUBLIC_PATHS = ["/login", "/api/auth"];
 
-  if (basicAuth) {
-    const authValue = basicAuth.split(" ")[1];
-    const [user, pwd] = atob(authValue).split(":");
+export async function middleware(req: NextRequest) {
+    const { pathname } = req.nextUrl;
 
-    if (user === process.env.AUTH_USER && pwd === process.env.AUTH_PASSWORD) {
-      return NextResponse.next();
+    if (
+        PUBLIC_PATHS.some((p) => pathname.startsWith(p)) ||
+        pathname.startsWith("/_next") ||
+        pathname === "/favicon.ico"
+    ) {
+        return NextResponse.next();
     }
-  }
 
-  return new NextResponse("Authentication required.", {
-    status: 401,
-    headers: {
-      "WWW-Authenticate": 'Basic realm="Warrant"',
-    },
-  });
+    const session = req.cookies.get("warrant_session")?.value;
+    const expected = await hashPassword(
+        process.env.AUTH_PASSWORD!,
+        process.env.AUTH_SECRET!
+    );
+
+    if (session === expected) {
+        return NextResponse.next();
+    }
+
+    const loginUrl = new URL("/login", req.url);
+    loginUrl.searchParams.set("from", pathname);
+    return NextResponse.redirect(loginUrl);
 }
 
 export const config = {
-  matcher: ["/((?!_next/static|_next/image|favicon.ico).*)"],
+    matcher: ["/((?!_next/static|_next/image|favicon.ico).*)"],
 };
