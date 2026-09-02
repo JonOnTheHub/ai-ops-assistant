@@ -10,6 +10,8 @@ const EXPECTED_FIELDS: Partial<Record<ToolName, string[]>> = {
     createTask: ["task"],
     createLead: ["lead"],
     sendEmail: ["email_id", "to", "subject"],
+    resolveAudience: ["recipients", "count"],
+    sendBroadcast: ["results", "sent_count", "failed_count", "total"],
 };
 
 export function validateToolResult(

@@ -1,8 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import { sendEmail } from "@/lib/tools/sendEmail";
+import { sendBroadcast } from "@/lib/tools/sendBroadcast";
 import { writeTrace } from "@/lib/tracing";
-import { ToolName } from "@/types";
+import { ToolName, BroadcastRecipient } from "@/types";
 
 const supabase = createClient(
     process.env.SUPABASE_URL!,
@@ -14,8 +15,10 @@ const supabase = createClient(
 type ApprovalFn = (args: Record<string, unknown>) => Promise<unknown>;
 
 const APPROVAL_EXECUTORS: Partial<Record<ToolName, ApprovalFn>> = {
-  sendEmail: (args) =>
-    sendEmail(args as { to: string; subject: string; body: string }),
+    sendEmail: (args) =>
+        sendEmail(args as { to: string; subject: string; body: string }),
+    sendBroadcast: (args) =>
+        sendBroadcast(args as { recipients: BroadcastRecipient[]; subject: string; body: string }),
 };
 
 export async function POST(

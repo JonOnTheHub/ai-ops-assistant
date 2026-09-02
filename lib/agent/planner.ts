@@ -2,9 +2,17 @@ import Groq from "groq-sdk";
 import { writeTrace } from "@/lib/tracing";
 import { getGroqTools } from "@/lib/tools";
 import { recallLongTermMemory } from "./memory";
-import { Message, ToolName } from "@/types";
+import { Message, ToolName, ToolResult } from "@/types";
 
 const groq = new Groq({ apiKey: process.env.GROQ_API_KEY! });
+
+// A tool call already executed earlier in THIS turn, fed back in so the
+// planner can decide what to do next with real results instead of guessing.
+export interface PlannerStep {
+    toolName: ToolName;
+    args: Record<string, unknown>;
+    result: ToolResult;
+}
 
 const SYSTEM_PROMPT = `You are Warrant, the AI operations assistant for Solmara Studio — a Lagos-based hospitality and events design studio serving high-end clients.
 
@@ -13,7 +21,7 @@ DECISION ORDER — follow these steps in order, every time, before doing anythin
 Step 1 — Is this message asking about something that already happened, or a status/history question? (Examples: "did we send that", "have we done X", "what happened with Y", "is that done yet", casual confirmations like "si?" or "right?" after a prior action, "to who?")
 → If yes: answer directly from the conversation history already provided to you. Do NOT call any tool. Say what you know from what's already in this conversation. Stop here.
 
-Step 2 — Is this message asking you to take a brand new action (send a new email, create a new task, create a new lead, look up a customer you haven't already looked up this turn)?
+Step 2 — Is this message asking you to take a brand new action (send a new email, create a new task, create a new lead, look up a customer you haven't already looked up this turn, message a group of people)?
 → If yes: proceed to pick the single correct tool for that action.
 
 Step 3 — Is this a genuine question about business policy, pricing, or procedure that you don't already have the answer to from this conversation?
@@ -21,12 +29,19 @@ Step 3 — Is this a genuine question about business policy, pricing, or procedu
 
 Never narrate this decision process out loud to the user. Do not say things like "I need to follow the decision order" or "I'll proceed to the next step" — just silently decide, then either call the tool or answer directly. The steps above are for your own reasoning only, never visible output.
 
+MULTI-STEP ACTIONS — some requests take more than one tool call to complete, in a fixed sequence:
+- Messaging a group of people is TWO steps: (1) resolveAudience to find out who matches, THEN (2) sendBroadcast with the exact recipient list resolveAudience returned. Never invent recipient emails yourself — always resolve first.
+- If you already called resolveAudience earlier in this turn (you'll see its result below), do not call it again. Look at what it returned and decide: if it found real recipients, call sendBroadcast next with that exact list, subject, and body. If it found nobody, say so plainly instead of calling sendBroadcast with an empty list.
+- Every tool call still passes through the permission layer on its own — resolving an audience never sends anything by itself, and sendBroadcast always still requires human approval.
+
 Tools available:
 - searchKnowledgeBase: search internal policies and business knowledge (Step 3 only)
 - getCustomer: look up customer records and history from the CRM
 - createTask: create a task or action item to track follow-ups
 - createLead: add a new lead to the CRM
-- sendEmail: draft and send a NEW email — this ALWAYS requires human approval before sending
+- sendEmail: draft and send a NEW email to a single customer/lead — this ALWAYS requires human approval before sending
+- resolveAudience: look up employees or customers to message, filtered by role and exclusions — read-only, never sends anything
+- sendBroadcast: send a message to a finalized recipient list from resolveAudience — this ALWAYS requires human approval before sending
 
 Rules:
 - Always use getCustomer before discussing or emailing a specific client — pull their real notes, company, and history into what you write
@@ -67,11 +82,12 @@ async function callGroqWithTools(
     toolChoice: "auto" | "required"
 ) {
     return groq.chat.completions.create({
-        model: "llama-3.3-70b-versatile",
+        model: "openai/gpt-oss-120b",
         messages,
         tools: getGroqTools(),
         tool_choice: toolChoice,
         max_tokens: 1024,
+        include_reasoning: false,
     });
 }
 
@@ -109,7 +125,8 @@ function looksLikeRawToolCall(content: string): boolean {
 export async function runPlanner(
     userMessage: string,
     history: Message[],
-    trace_id: string
+    trace_id: string,
+    priorSteps: PlannerStep[] = []
 ): Promise<PlannerOutput> {
     const start = Date.now();
 
@@ -120,6 +137,40 @@ export async function runPlanner(
             ? `\n\nRelevant memory from past conversations:\n${memories.map((m) => `- ${m}`).join("\n")}`
             : "";
 
+    // Prior steps from THIS turn become real tool_call / tool result message
+    // pairs, exactly like a completed turn would look — so the model reasons
+    // over actual returned data, not a description of it.
+    const priorStepMessages: Groq.Chat.ChatCompletionMessageParam[] = priorSteps.flatMap(
+        (step, i) => {
+            const callId = `step_${i}`;
+            return [
+                {
+                    role: "assistant" as const,
+                    content: null,
+                    tool_calls: [
+                        {
+                            id: callId,
+                            type: "function" as const,
+                            function: {
+                                name: step.toolName,
+                                arguments: JSON.stringify(step.args),
+                            },
+                        },
+                    ],
+                },
+                {
+                    role: "tool" as const,
+                    tool_call_id: callId,
+                    content: JSON.stringify(
+                        step.result.success
+                            ? step.result.data
+                            : { error: step.result.error }
+                    ),
+                },
+            ];
+        }
+    );
+
     const messages: Groq.Chat.ChatCompletionMessageParam[] = [
         { role: "system", content: SYSTEM_PROMPT + memoryBlock },
         ...history.map((m) => ({
@@ -127,6 +178,7 @@ export async function runPlanner(
             content: m.content,
         })),
         { role: "user", content: userMessage },
+        ...priorStepMessages,
     ];
 
     // Every exit funnels through here — writes the trace and returns.
@@ -136,7 +188,7 @@ export async function runPlanner(
             trace_id,
             step: "plan",
             tool_name: output.type === "tool_call" ? output.toolName : undefined,
-            input: { userMessage, memoryCount: memories.length, ...extra },
+            input: { userMessage, memoryCount: memories.length, stepIndex: priorSteps.length, ...extra },
             output:
                 output.type === "tool_call"
                     ? { toolName: output.toolName, args: output.args }

@@ -5,7 +5,17 @@ export type ToolName =
     | "sendEmail"
     | "createLead"
     | "createTask"
-    | "getCustomer";
+    | "getCustomer"
+    | "resolveAudience"
+    | "sendBroadcast";
+
+export type BroadcastTargetType = "employees" | "customers";
+
+export interface BroadcastRecipient {
+    name: string;
+    email: string;
+    role?: string;
+}
 
 export type TraceStep =
     | "plan"
@@ -74,4 +84,3 @@ export interface PendingAction {
     status: "pending" | "approved" | "rejected";
     created_at: string;
 }
-

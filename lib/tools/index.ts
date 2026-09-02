@@ -119,6 +119,70 @@ export const TOOL_REGISTRY: Record<ToolName, ToolDefinition> = {
             required: ["to", "subject", "body"],
         },
     },
+    resolveAudience: {
+        name: "resolveAudience",
+        tier: "auto",
+        description:
+            "Look up employees or customers to message, filtered by role and/or excluding specific people by name. Read-only — does not send anything. Always call this before sendBroadcast to build the recipient list.",
+        parameters: {
+            type: "object",
+            properties: {
+                targetType: {
+                    type: "string",
+                    enum: ["employees", "customers"],
+                    description: "Whether to look up employees or customers",
+                },
+                includeRoles: {
+                    type: "array",
+                    items: { type: "string" },
+                    description: "Employee roles to include, e.g. ['Catering']. Omit to include all roles. Ignored for customers.",
+                },
+                excludeNames: {
+                    type: "array",
+                    items: { type: "string" },
+                    description: "Names to exclude from the matched list, e.g. someone in an included role who should not receive the message",
+                },
+                query: {
+                    type: "string",
+                    description: "Optional partial-name search to narrow results further",
+                },
+            },
+            required: ["targetType"],
+        },
+    },
+
+    sendBroadcast: {
+        name: "sendBroadcast",
+        tier: "needs-approval",
+        description:
+            "Send a message to a finalized list of recipients (from resolveAudience). IMPORTANT: This tool requires human approval before sending. Never call this without first resolving the recipient list.",
+        parameters: {
+            type: "object",
+            properties: {
+                recipients: {
+                    type: "array",
+                    items: {
+                        type: "object",
+                        properties: {
+                            name: { type: "string" },
+                            email: { type: "string" },
+                        },
+                        required: ["name", "email"],
+                    },
+                    description: "Finalized list of recipients to send to",
+                },
+                subject: {
+                    type: "string",
+                    description: "Message subject line",
+                },
+                body: {
+                    type: "string",
+                    description: "Full message body in plain text",
+                },
+            },
+            required: ["recipients", "subject", "body"],
+        },
+    },
 };
 
 // Groq-compatible tool list — fed directly into the planner API call

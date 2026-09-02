@@ -6,8 +6,10 @@ import { getCustomer } from "@/lib/tools/getCustomer";
 import { createTask } from "@/lib/tools/createTask";
 import { createLead } from "@/lib/tools/createLead";
 import { sendEmail } from "@/lib/tools/sendEmail";
+import { resolveAudience } from "@/lib/tools/resolveAudience";
+import { sendBroadcast } from "@/lib/tools/sendBroadcast";
 import { validateToolResult } from "./validator";
-import { ToolName, ToolResult } from "@/types";
+import { ToolName, ToolResult, BroadcastRecipient } from "@/types";
 
 type ToolFn = (args: Record<string, unknown>) => Promise<ToolResult>;
 
@@ -22,6 +24,13 @@ const TOOL_IMPLEMENTATIONS: Record<ToolName, ToolFn> = {
     createLead(args as { name: string; email: string; company?: string; source?: "inbound" | "cold-outreach" | "referral" | "other" }),
   sendEmail: (args) =>
     sendEmail(args as { to: string; subject: string; body: string }),
+  resolveAudience: (args) =>
+    resolveAudience(args as { targetType: "employees" | "customers"; includeRoles?: string[]; excludeNames?: string[]; query?: string }),
+  // sendBroadcast is needs-approval tier, so this path never actually runs it —
+  // included only because TOOL_IMPLEMENTATIONS must cover every ToolName.
+  // Real execution happens in app/api/actions/[id]/route.ts after human approval.
+  sendBroadcast: (args) =>
+    sendBroadcast(args as { recipients: BroadcastRecipient[]; subject: string; body: string }),
 };
 
 export type ExecutorResult =

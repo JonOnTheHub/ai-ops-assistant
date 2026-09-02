@@ -2,7 +2,7 @@ import { NextRequest } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import Groq from "groq-sdk";
 import { randomUUID } from "crypto";
-import { runPlanner } from "@/lib/agent/planner";
+import { runPlanner, PlannerStep } from "@/lib/agent/planner";
 import { executeTool } from "@/lib/agent/executor";
 import { manageShortTermMemory } from "@/lib/agent/memory";
 import { writeTrace } from "@/lib/tracing";
@@ -17,6 +17,14 @@ const supabase = createClient(
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+
+// Hard cap on chained tool calls within a single turn. This is what keeps
+// multi-step planning "constrained deterministic agent" rather than
+// "AutoGPT chaos" — a bounded, auditable sequence, never an open loop.
+// Each individual call still passes through the exact same permission layer;
+// this cap only limits how many auto/log-and-run steps can chain before we
+// stop and say so honestly instead of looping indefinitely.
+const MAX_TOOL_STEPS = 4;
 
 async function fetchFullTrace(trace_id: string) {
     const { data } = await supabase
@@ -50,15 +58,25 @@ export async function POST(req: NextRequest) {
                     conversation_history
                 );
 
-                // Step 2 — run planner
+                // Step 2 — bounded tool-call loop. Each iteration: plan, then
+                // (if a tool was picked) execute it and feed the real result
+                // back into the next plan call. Stops the moment the planner
+                // is done (direct_response), a needs-approval tool is picked
+                // (halt for human approval, unchanged from before), or the
+                // step cap is hit.
+                const completedSteps: PlannerStep[] = [];
+
                 send({ type: "status", message: "Thinking..." });
+                let plan = await runPlanner(message, history, trace_id, completedSteps);
 
-                const plan = await runPlanner(message, history, trace_id);
+                let hitStepCap = false;
 
-                // Step 3 — if planner picked a tool, execute it
-                let toolContext = "";
+                while (plan.type === "tool_call") {
+                    if (completedSteps.length >= MAX_TOOL_STEPS) {
+                        hitStepCap = true;
+                        break;
+                    }
 
-                if (plan.type === "tool_call") {
                     send({
                         type: "status",
                         message: `Using tool: ${plan.toolName}...`,
@@ -70,7 +88,9 @@ export async function POST(req: NextRequest) {
                         trace_id
                     );
 
-                    // needs-approval path — halt, tell user, return early
+                    // needs-approval path — halt, tell user, return early.
+                    // Unchanged: a needs-approval tool ALWAYS halts immediately,
+                    // regardless of how many auto/log-and-run steps preceded it.
                     if (execResult.type === "pending") {
                         send({
                             type: "pending_approval",
@@ -97,19 +117,50 @@ export async function POST(req: NextRequest) {
                         return;
                     }
 
-                    // Build tool context to inject into final response generator
-                    if (execResult.result.success) {
-                        toolContext = `Tool ${plan.toolName} returned:\n${JSON.stringify(
-                            execResult.result.data,
-                            null,
-                            2
-                        )}`;
-                    } else {
-                        toolContext = `Tool ${plan.toolName} failed: ${execResult.result.error}`;
-                    }
+                    completedSteps.push({
+                        toolName: plan.toolName,
+                        args: plan.args,
+                        result: execResult.result,
+                    });
+
+                    send({ type: "status", message: "Thinking..." });
+                    plan = await runPlanner(message, history, trace_id, completedSteps);
+                }
+
+                // Step 3 — decide what to stream: an honest step-cap message,
+                // the planner's own direct answer (no tools were ever needed
+                // this turn), or a synthesis of everything the tools returned.
+                let toolContext = "";
+                let contentToStream: string | null = null;
+
+                if (hitStepCap) {
+                    contentToStream =
+                        "I wasn't able to finish that within the number of steps I'm allowed to take automatically — could you break it into a smaller request, or try again?";
+
+                    await writeTrace({
+                        trace_id,
+                        step: "plan",
+                        input: { message, stepIndex: completedSteps.length },
+                        output: { haltedReason: "max_steps_exceeded" },
+                        status: "error",
+                        latency_ms: 0,
+                    });
+                } else if (completedSteps.length === 0 && plan.type === "direct_response") {
+                    // No tool was ever needed this turn — answer straight from
+                    // conversation history, exactly like the original single-shot path.
+                    contentToStream = plan.content;
                 } else {
-                    // Direct response from planner — skip tool execution
-                    toolContext = "";
+                    // One or more tools ran this turn — synthesize the final answer
+                    // from EVERYTHING they returned, not just the last one, so a
+                    // multi-step turn (e.g. resolveAudience → sendBroadcast) reads
+                    // as one coherent answer instead of only reflecting the last step.
+                    toolContext = completedSteps
+                        .map((step) =>
+                            step.result.success
+                                ? `Tool ${step.toolName} returned:\n${JSON.stringify(step.result.data, null, 2)}`
+                                : `Tool ${step.toolName} failed: ${step.result.error}`
+                        )
+                        .join("\n\n");
                 }
 
                 // Step 4 — stream final response
@@ -118,24 +169,20 @@ export async function POST(req: NextRequest) {
                 const finalStart = Date.now();
 
                 const systemPrompt =
-  plan.type === "direct_response" && plan.content
-    ? null
-    : `You are Warrant, the AI operations assistant for Solmara Studio. Based on the tool result below, give a clear, concise response to the user.
+                    contentToStream !== null
+                        ? null
+                        : `You are Warrant, the AI operations assistant for Solmara Studio. Based on the tool result(s) below, give a clear, concise response to the user.
 
 Rules:
 - Never narrate what you're about to do or did ("I'll search...", "let me check...", "I checked our records..."). Just state the answer directly, as if you already know it.
 - Never mention internal tool names, JSON, or function syntax.
-- State concrete facts, figures, and numbers exactly as they appear in the tool result below — do not hedge, generalize, or paraphrase a specific number into a vague statement like "pricing varies." If the tool result contains a number, name, or date, use it verbatim.
-- If the tool result genuinely contains no relevant information, say so plainly rather than inventing a generic-sounding non-answer.
+- State concrete facts, figures, and numbers exactly as they appear in the tool result(s) below — do not hedge, generalize, or paraphrase a specific number into a vague statement like "pricing varies." If a tool result contains a number, name, or date, use it verbatim.
+- If a broadcast or email send had partial failures, state the exact counts (e.g. "9 of 12 sent, 3 failed") — never round up to "sent successfully" if any recipient failed.
+- If the tool result(s) genuinely contain no relevant information, say so plainly rather than inventing a generic-sounding non-answer.
 - Format with markdown: bullet points for distinct fields (email, phone, status), bold for labels. Keep it scannable, not a paragraph wall.
 
-Tool result:
+Tool result(s):
 ${toolContext}`;
-
-                // If planner returned a direct response (no tool), stream that content
-                // Otherwise stream a synthesis of the tool result
-                const contentToStream =
-                    plan.type === "direct_response" ? plan.content : null;
 
                 if (contentToStream) {
                     // Stream the planner's direct response token by token
@@ -144,15 +191,16 @@ ${toolContext}`;
                         await new Promise((r) => setTimeout(r, 8));
                     }
                 } else {
-                    // Stream a Groq synthesis of the tool result
+                    // Stream a Groq synthesis of the accumulated tool result(s)
                     const streamResponse = await groq.chat.completions.create({
-                        model: "llama-3.3-70b-versatile",
+                        model: "openai/gpt-oss-120b",
                         messages: [
                             { role: "system", content: systemPrompt! },
                             { role: "user", content: message },
                         ],
                         stream: true,
                         max_tokens: 1024,
+                        include_reasoning: false,
                     });
 
                     for await (const chunk of streamResponse) {
@@ -170,14 +218,14 @@ ${toolContext}`;
                     step: "final_response",
                     input: {
                         message,
-                        toolUsed: plan.type === "tool_call" ? plan.toolName : null,
+                        toolsUsed: completedSteps.map((s) => s.toolName),
+                        hitStepCap,
                     },
                     output: { streamed: true },
                     status: "success",
                     latency_ms: finalLatency,
                 });
 
-                // ← this was missing on the completion path — the actual bug
                 const fullTrace = await fetchFullTrace(trace_id);
                 send({ type: "trace_batch", trace_id, userMessage: message, steps: fullTrace });
 
