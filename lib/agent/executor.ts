@@ -19,13 +19,13 @@ const TOOL_IMPLEMENTATIONS: Record<ToolName, ToolFn> = {
   getCustomer: (args) =>
     getCustomer(args as { query: string }),
   createTask: (args) =>
-    createTask(args as { title: string; description: string; customer_name?: string }),
+    createTask(args as { title: string; description: string; customer_name?: string | null }),
   createLead: (args) =>
-    createLead(args as { name: string; email: string; company?: string; source?: "inbound" | "cold-outreach" | "referral" | "other" }),
+    createLead(args as { name: string; email: string; company?: string | null; source?: "inbound" | "cold-outreach" | "referral" | "other" | null }),
   sendEmail: (args) =>
     sendEmail(args as { to: string; subject: string; body: string }),
   resolveAudience: (args) =>
-    resolveAudience(args as { targetType: "employees" | "customers"; includeRoles?: string[]; excludeNames?: string[]; query?: string }),
+    resolveAudience(args as { targetType: "employees" | "customers"; includeRoles?: string[] | null; excludeNames?: string[] | null; query?: string | null }),
   // sendBroadcast is needs-approval tier, so this path never actually runs it —
   // included only because TOOL_IMPLEMENTATIONS must cover every ToolName.
   // Real execution happens in app/api/actions/[id]/route.ts after human approval.

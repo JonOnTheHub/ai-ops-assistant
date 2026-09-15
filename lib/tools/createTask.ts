@@ -4,7 +4,7 @@ import { ToolResult } from "@/types";
 export async function createTask(args: {
     title: string;
     description: string;
-    customer_name?: string;
+    customer_name?: string | null;
 }): Promise<ToolResult> {
     try {
         let related_customer_id: string | null = null;

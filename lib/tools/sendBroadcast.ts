@@ -57,6 +57,18 @@ export async function sendBroadcast(args: {
         const sentCount = results.filter((r) => r.success).length;
         const failedCount = results.length - sentCount;
 
+        const sentNames = results.filter((r) => r.success).map((r) => r.name);
+        const failedNames = results.filter((r) => !r.success).map((r) => r.name);
+
+        // Include real names, not just counts — this is what actually persists
+        // into conversation history once the turn ends, so "who did we send
+        // to" needs a real answer available here, not just a tally.
+        let message = `${sentCount}/${results.length} sent (${sentNames.join(", ")})`;
+        if (failedCount > 0) {
+            message += ` — ${failedCount} failed (${failedNames.join(", ")})`;
+        }
+        message += ".";
+
         return {
             success: true,
             data: {
@@ -64,7 +76,7 @@ export async function sendBroadcast(args: {
                 sent_count: sentCount,
                 failed_count: failedCount,
                 total: results.length,
-                message: `${sentCount}/${results.length} sent${failedCount > 0 ? ` — ${failedCount} failed` : ""}.`,
+                message,
             },
         };
     } catch (err) {

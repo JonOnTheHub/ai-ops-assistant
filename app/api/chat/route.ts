@@ -45,10 +45,31 @@ export async function POST(req: NextRequest) {
 
     const stream = new ReadableStream({
         async start(controller) {
+            let streamClosed = false;
+
             const send = (data: object) => {
-                controller.enqueue(
-                    encoder.encode(`data: ${JSON.stringify(data)}\n\n`)
-                );
+                if (streamClosed) return;
+                try {
+                    controller.enqueue(
+                        encoder.encode(`data: ${JSON.stringify(data)}\n\n`)
+                    );
+                } catch (err) {
+                    // Client disconnected (page nav/reload) mid-stream — the
+                    // underlying controller can close out from under us
+                    // asynchronously. Not a real failure, just stop sending.
+                    streamClosed = true;
+                    console.warn("[chat] send skipped — controller already closed:", err);
+                }
+            };
+
+            const closeStream = () => {
+                if (streamClosed) return;
+                streamClosed = true;
+                try {
+                    controller.close();
+                } catch {
+                    // Already closed by the client disconnecting — fine, ignore.
+                }
             };
 
             try {
@@ -113,7 +134,7 @@ export async function POST(req: NextRequest) {
                         send({ type: "trace_batch", trace_id, userMessage: message, steps: fullTrace });
 
                         send({ type: "done", trace_id });
-                        controller.close();
+                        closeStream();
                         return;
                     }
 
@@ -230,7 +251,7 @@ ${toolContext}`;
                 send({ type: "trace_batch", trace_id, userMessage: message, steps: fullTrace });
 
                 send({ type: "done", trace_id });
-                controller.close();
+                closeStream();
             } catch (err) {
                 console.error("[chat] stream error:", err);
 
@@ -244,7 +265,7 @@ ${toolContext}`;
                 });
 
                 send({ type: "error", message: "Something went wrong. Please try again." });
-                controller.close();
+                closeStream();
             }
         },
     });

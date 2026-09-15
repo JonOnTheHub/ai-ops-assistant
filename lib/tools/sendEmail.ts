@@ -29,7 +29,7 @@ export async function sendEmail(args: {
         email_id: data?.id,
         to: args.to,
         subject: args.subject,
-        message: "Email sent successfully.",
+        message: `Email sent to ${args.to}.`,
       },
     };
   } catch (err) {

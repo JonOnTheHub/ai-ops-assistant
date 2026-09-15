@@ -4,8 +4,8 @@ import { ToolResult } from "@/types";
 export async function createLead(args: {
     name: string;
     email: string;
-    company?: string;
-    source?: "inbound" | "cold-outreach" | "referral" | "other";
+    company?: string | null;
+    source?: "inbound" | "cold-outreach" | "referral" | "other" | null;
 }): Promise<ToolResult> {
     try {
         // Check if lead already exists by email

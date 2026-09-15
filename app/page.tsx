@@ -31,11 +31,6 @@ interface ChatMessage {
   content: string;
   toolUsed?: string;
   traceId?: string;
-  resolution?: {
-    outcome: "approved" | "rejected" | "failed";
-    toolName: string;
-    detail: string;
-  };
 }
 
 interface PendingAction {
@@ -107,6 +102,7 @@ function ApprovalCard({
   const [status, setStatus] = useState<ApprovalStatus>("idle");
   const [pendingStatus, setPendingStatus] = useState<"approved" | "rejected" | "failed" | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [resultMessage, setResultMessage] = useState<string | null>(null);
 
   const handle = async (decision: "approve" | "reject") => {
     setStatus(decision === "approve" ? "approving" : "rejecting");
@@ -134,9 +130,17 @@ function ApprovalCard({
       const toolSucceeded = res.ok && data.success && data.result?.success;
 
       if (toolSucceeded) {
+        // Every needs-approval tool returns its own human-readable summary
+        // in data.message (e.g. "Email sent to x@y.com." or "9/12 sent —
+        // 3 failed."). Use that directly instead of hardcoding per-tool
+        // detail strings here — this is what actually broke for broadcast
+        // ("Sent to recipient") since that string only ever knew about
+        // sendEmail's single `to` field.
+        const summary: string = data.result?.data?.message ?? "Action completed.";
+        setResultMessage(summary);
         setPendingStatus("approved");
         setStatus("done");
-        setTimeout(() => onResolve(action.id, "approved", `Sent to ${args.to ?? "recipient"}`), 2500);
+        setTimeout(() => onResolve(action.id, "approved", summary), 2500);
       } else {
         setPendingStatus("failed");
         setErrorMessage(
@@ -152,7 +156,12 @@ function ApprovalCard({
     }
   };
 
-  const args = action.args as { to?: string; subject?: string; body?: string };
+  const args = action.args as {
+    to?: string;
+    subject?: string;
+    body?: string;
+    recipients?: { name: string; email: string }[];
+  };
 
   return (
     <motion.div
@@ -184,6 +193,16 @@ function ApprovalCard({
             <div className="text-neutral-400">
               <span className="text-neutral-600 uppercase text-[10px] tracking-wider">To </span>
               <span className="text-neutral-200">{args.to}</span>
+            </div>
+          )}
+          {args.recipients && args.recipients.length > 0 && (
+            <div className="text-neutral-400">
+              <span className="text-neutral-600 uppercase text-[10px] tracking-wider">
+                To ({args.recipients.length}){" "}
+              </span>
+              <span className="text-neutral-200">
+                {args.recipients.map((r) => r.name).join(", ")}
+              </span>
             </div>
           )}
           {args.subject && (
@@ -219,7 +238,7 @@ function ApprovalCard({
                 <CheckCircle size={13} weight="fill" />
               )}
               {pendingStatus === "approved"
-                ? "Email sent successfully."
+                ? resultMessage ?? "Action completed."
                 : pendingStatus === "failed"
                   ? "Send failed."
                   : "Action rejected."}
@@ -670,38 +689,24 @@ export default function Home() {
     const resolved = pendingActions.find((a) => a.id === id);
 
     if (resolved) {
-      const summaryDetail =
-        detail ??
-        (outcome === "approved"
-          ? "Action completed."
-          : outcome === "rejected"
-            ? "Rejected."
-            : "Action failed.");
-
-      const args = resolved.args as { to?: string; subject?: string };
-
-      // This becomes actual conversation history sent to the model —
-      // not just UI decoration. Without this, the model has no way to
-      // know what happened after an approval resolved.
-      const contentSummary =
+      // `detail` is the tool's own returned summary (e.g. "Email sent to
+      // x@y.com." or "9/12 sent — 3 failed.") for approved/failed outcomes.
+      // This becomes both what's shown to Jon AND real conversation history
+      // sent back to the model on the next turn — one string, one source of
+      // truth, no separate "system log" phrasing to keep in sync.
+      const content =
         outcome === "approved"
-          ? `[System log] ${resolved.toolName} executed successfully.${args.to ? ` Recipient: ${args.to}.` : ""
-          }${args.subject ? ` Subject: ${args.subject}.` : ""}`
+          ? `Done — ${detail ?? `${resolved.toolName} completed.`}`
           : outcome === "rejected"
-            ? `[System log] ${resolved.toolName} was rejected by the user and did not execute.`
-            : `[System log] ${resolved.toolName} failed to execute. ${summaryDetail}`;
+            ? `Okay, I didn't send that — you rejected it.`
+            : `That didn't go through: ${detail ?? "the action failed."}`;
 
       setMessages((prev) => [
         ...prev,
         {
           id: crypto.randomUUID(),
-          role: "system",
-          content: contentSummary,
-          resolution: {
-            outcome,
-            toolName: resolved.toolName,
-            detail: summaryDetail,
-          },
+          role: "assistant",
+          content,
         },
       ]);
     }
@@ -812,77 +817,53 @@ export default function Home() {
                 </motion.div>
               )}
 
-              {messages.map((msg) =>
-                msg.resolution ? (
-                  <motion.div
-                    key={msg.id}
-                    initial={{ opacity: 0, y: 4 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    className="flex justify-center"
-                  >
-                    <div
-                      className={`flex items-center gap-2 text-[11px] font-mono uppercase tracking-wider px-3 py-1.5 border ${msg.resolution.outcome === "approved"
-                        ? "border-yellow-400/40 text-yellow-400"
-                        : msg.resolution.outcome === "failed"
-                          ? "border-red-600/40 text-red-500"
-                          : "border-neutral-800 text-neutral-500"
-                        }`}
-                    >
-                      {msg.resolution.outcome === "failed" ? (
-                        <XCircle size={12} weight="fill" />
-                      ) : (
-                        <CheckCircle size={12} weight="fill" />
-                      )}
-                      {msg.resolution.toolName}: {msg.resolution.detail}
+              {messages.map((msg) => (
+                <motion.div
+                  key={msg.id}
+                  initial={{ opacity: 0, y: 6 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ type: "spring", stiffness: 300, damping: 30 }}
+                  className={`flex gap-3 ${msg.role === "user" ? "justify-end" : "justify-start"
+                    }`}
+                >
+                  {msg.role !== "user" && (
+                    <div className="w-6 h-6 rounded-lg bg-yellow-400 flex items-center justify-center shrink-0 mt-0.5">
+                      <Robot size={11} className="text-black" weight="fill" />
                     </div>
-                  </motion.div>
-                ) : (
-                  <motion.div
-                    key={msg.id}
-                    initial={{ opacity: 0, y: 6 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    transition={{ type: "spring", stiffness: 300, damping: 30 }}
-                    className={`flex gap-3 ${msg.role === "user" ? "justify-end" : "justify-start"
+                  )}
+
+                  <div
+                    className={`max-w-[78%] px-4 py-3 text-sm leading-relaxed rounded-2xl border ${msg.role === "user"
+                      ? "bg-neutral-900 text-neutral-100 border-neutral-800/60 rounded-tr-sm"
+                      : msg.role === "system"
+                        ? "bg-red-950/30 border-red-900/50 text-red-400"
+                        : "bg-black border-neutral-800/60 text-neutral-200 rounded-tl-sm"
                       }`}
                   >
-                    {msg.role !== "user" && (
-                      <div className="w-6 h-6 rounded-lg bg-yellow-400 flex items-center justify-center shrink-0 mt-0.5">
-                        <Robot size={11} className="text-black" weight="fill" />
-                      </div>
-                    )}
+                    {msg.content ? (
+                      msg.role === "user" ? (
+                        msg.content
+                      ) : (
+                        <div className="prose-chat">
+                          <ReactMarkdown>{msg.content}</ReactMarkdown>
+                        </div>
+                      )
+                    ) : streamingId === msg.id ? (
+                      <motion.span
+                        animate={{ opacity: [1, 0] }}
+                        transition={{ duration: 0.6, repeat: Infinity }}
+                        className="inline-block w-2 h-4 bg-yellow-400"
+                      />
+                    ) : null}
+                  </div>
 
-                    <div
-                      className={`max-w-[78%] px-4 py-3 text-sm leading-relaxed rounded-2xl border ${msg.role === "user"
-                        ? "bg-neutral-900 text-neutral-100 border-neutral-800/60 rounded-tr-sm"
-                        : msg.role === "system"
-                          ? "bg-red-950/30 border-red-900/50 text-red-400"
-                          : "bg-black border-neutral-800/60 text-neutral-200 rounded-tl-sm"
-                        }`}
-                    >
-                      {msg.content ? (
-                        msg.role === "user" ? (
-                          msg.content
-                        ) : (
-                          <div className="prose-chat">
-                            <ReactMarkdown>{msg.content}</ReactMarkdown>
-                          </div>
-                        )
-                      ) : streamingId === msg.id ? (
-                        <motion.span
-                          animate={{ opacity: [1, 0] }}
-                          transition={{ duration: 0.6, repeat: Infinity }}
-                          className="inline-block w-2 h-4 bg-yellow-400"
-                        />
-                      ) : null}
+                  {msg.role === "user" && (
+                    <div className="w-6 h-6 rounded-lg bg-neutral-900 border border-neutral-700/60 flex items-center justify-center shrink-0 mt-0.5">
+                      <User size={11} className="text-neutral-400" />
                     </div>
-
-                    {msg.role === "user" && (
-                      <div className="w-6 h-6 rounded-lg bg-neutral-900 border border-neutral-700/60 flex items-center justify-center shrink-0 mt-0.5">
-                        <User size={11} className="text-neutral-400" />
-                      </div>
-                    )}
-                  </motion.div>
-                ))}
+                  )}
+                </motion.div>
+              ))}
 
               {pendingActions.map((action) => (
                 <motion.div key={action.id} layout>
