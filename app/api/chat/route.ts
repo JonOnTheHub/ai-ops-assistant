@@ -98,6 +98,20 @@ export async function POST(req: NextRequest) {
                         break;
                     }
 
+                    const stepIndex = completedSteps.length;
+
+                    // Plan preview: this step was just decided by the planner —
+                    // reactively, not pre-committed. The frontend only ever
+                    // learns a step exists the moment it's real, same principle
+                    // as the rest of this system: never show intent that hasn't
+                    // actually formed yet.
+                    send({
+                        type: "plan_step",
+                        stepIndex,
+                        toolName: plan.toolName,
+                        status: "running",
+                    });
+
                     send({
                         type: "status",
                         message: `Using tool: ${plan.toolName}...`,
@@ -113,6 +127,13 @@ export async function POST(req: NextRequest) {
                     // Unchanged: a needs-approval tool ALWAYS halts immediately,
                     // regardless of how many auto/log-and-run steps preceded it.
                     if (execResult.type === "pending") {
+                        send({
+                            type: "plan_step",
+                            stepIndex,
+                            toolName: plan.toolName,
+                            status: "pending_approval",
+                        });
+
                         send({
                             type: "pending_approval",
                             pendingActionId: execResult.pendingActionId,
@@ -137,6 +158,13 @@ export async function POST(req: NextRequest) {
                         closeStream();
                         return;
                     }
+
+                    send({
+                        type: "plan_step",
+                        stepIndex,
+                        toolName: plan.toolName,
+                        status: execResult.result.success ? "completed" : "failed",
+                    });
 
                     completedSteps.push({
                         toolName: plan.toolName,

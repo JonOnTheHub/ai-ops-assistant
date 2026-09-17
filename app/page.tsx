@@ -25,12 +25,19 @@ import ReactMarkdown from "react-markdown";
 
 type MessageRole = "user" | "assistant" | "system";
 
+interface PlanStep {
+  stepIndex: number;
+  toolName: string;
+  status: "running" | "completed" | "failed" | "pending_approval";
+}
+
 interface ChatMessage {
   id: string;
   role: MessageRole;
   content: string;
   toolUsed?: string;
   traceId?: string;
+  planSteps?: PlanStep[];
 }
 
 interface PendingAction {
@@ -38,6 +45,7 @@ interface PendingAction {
   toolName: string;
   args: Record<string, unknown>;
   message: string;
+  planSteps?: PlanStep[];
 }
 
 interface TraceLogRow {
@@ -89,6 +97,58 @@ function StatusPill({ text }: { text: string }) {
       />
       {text}
     </motion.div>
+  );
+}
+
+// Reactive plan preview — a step only ever appears here the moment the
+// planner actually decides it, never a fabricated full sequence shown up
+// front. Most turns are single-step and this barely shows itself at all,
+// which is correct: it should only earn visibility on genuinely multi-step
+// turns (e.g. resolveAudience -> sendBroadcast), not decorate every reply.
+function PlanPreview({ steps }: { steps: PlanStep[] }) {
+  if (steps.length === 0) return null;
+
+  return (
+    <div className="flex flex-col gap-1.5 mb-2 text-xs font-mono">
+      {steps.map((step) => (
+        <motion.div
+          key={step.stepIndex}
+          initial={{ opacity: 0, x: -4 }}
+          animate={{ opacity: 1, x: 0 }}
+          className="flex items-center gap-2"
+        >
+          {step.status === "running" && (
+            <motion.span
+              animate={{ opacity: [1, 0.3] }}
+              transition={{ duration: 0.8, repeat: Infinity }}
+              className="w-3 h-3 rounded-full border border-yellow-400 shrink-0"
+            />
+          )}
+          {step.status === "completed" && (
+            <CheckCircle size={13} className="text-yellow-400 shrink-0" weight="fill" />
+          )}
+          {step.status === "failed" && (
+            <XCircle size={13} className="text-red-500 shrink-0" weight="fill" />
+          )}
+          {step.status === "pending_approval" && (
+            <Lightning size={13} className="text-yellow-400 shrink-0" weight="fill" />
+          )}
+          <span
+            className={
+              step.status === "failed"
+                ? "text-red-500"
+                : step.status === "pending_approval"
+                  ? "text-yellow-400"
+                  : "text-neutral-500"
+            }
+          >
+            {step.toolName}
+            {step.status === "pending_approval" ? " — awaiting approval" : ""}
+            {step.status === "failed" ? " — failed" : ""}
+          </span>
+        </motion.div>
+      ))}
+    </div>
   );
 }
 
@@ -177,6 +237,10 @@ function ApprovalCard({
       {pendingStatus === "failed" && <div className="h-2 w-full bg-red-600" />}
 
       <div className="p-4 space-y-3">
+        {action.planSteps && action.planSteps.length > 0 && (
+          <PlanPreview steps={action.planSteps} />
+        )}
+
         <div className="flex items-center gap-2">
           <Lightning size={14} className="text-yellow-400" weight="fill" />
           <span className="text-xs font-bold text-yellow-400 uppercase tracking-widest font-mono">
@@ -577,6 +641,13 @@ export default function Home() {
     setMessages((prev) => [...prev, assistantMsg]);
     setStreamingId(assistantId);
 
+    // Scoped to this single turn — updated synchronously as plan_step events
+    // arrive over the stream, since we're reading it in one sequential loop.
+    // Read from here (not React state) when a halt needs to carry the plan
+    // preview over to the pending-approval card before the assistant
+    // message placeholder gets removed.
+    let currentPlanSteps: PlanStep[] = [];
+
     try {
       const res = await fetch("/api/chat", {
         method: "POST",
@@ -611,6 +682,25 @@ export default function Home() {
 
             if (event.type === "status") {
               setStatusText(event.message);
+            } else if (event.type === "plan_step") {
+              const idx = currentPlanSteps.findIndex(
+                (s) => s.stepIndex === event.stepIndex
+              );
+              const updated: PlanStep = {
+                stepIndex: event.stepIndex,
+                toolName: event.toolName,
+                status: event.status,
+              };
+              currentPlanSteps =
+                idx === -1
+                  ? [...currentPlanSteps, updated]
+                  : currentPlanSteps.map((s, i) => (i === idx ? updated : s));
+
+              setMessages((prev) =>
+                prev.map((m) =>
+                  m.id === assistantId ? { ...m, planSteps: currentPlanSteps } : m
+                )
+              );
             } else if (event.type === "token") {
               appendToken(assistantId, event.token);
               setStatusText("");
@@ -625,6 +715,7 @@ export default function Home() {
                   toolName: event.toolName,
                   args: event.args,
                   message: event.message,
+                  planSteps: currentPlanSteps,
                 },
               ]);
               setStatusText("");
@@ -840,6 +931,9 @@ export default function Home() {
                         : "bg-black border-neutral-800/60 text-neutral-200 rounded-tl-sm"
                       }`}
                   >
+                    {msg.role !== "user" && msg.planSteps && msg.planSteps.length > 0 && (
+                      <PlanPreview steps={msg.planSteps} />
+                    )}
                     {msg.content ? (
                       msg.role === "user" ? (
                         msg.content
