@@ -2,23 +2,13 @@ import { supabase } from "@/lib/supabase";
 import { embed } from "@/lib/embeddings";
 import { ToolResult } from "@/types";
 
-// A single, permissive threshold — not a cascade. The earlier cascade
-// (try 0.7, then 0.5, then 0.35, stopping at the first tier with ANY
-// results) had a real bug: a mediocre, broadly-relevant document could
-// satisfy a mid-tier threshold on its own and cause the function to
-// return immediately, silently starving out a more specific, more
-// useful document that would have cleared the next looser tier
-// alongside it. Concretely: agency-identity.md (broad, generic) scored
-// just high enough to stop the cascade at 0.5, so retainer-policy.md
-// (short, specific, the one with the actual pricing figure) never got
-// a chance to appear — even though it clears 0.35 easily and had shown
-// up fine in searches where agency-identity.md happened to score lower.
-// One call at the loosest reasonable threshold, with match_count
-// capping and similarity-ordering already doing the real quality
-// control, means every genuinely relevant document gets a chance to
-// surface together instead of the first lucky match blocking the rest.
 const MATCH_THRESHOLD = 0.35;
 const MATCH_COUNT = 5;
+const CONFIDENCE_THRESHOLD = 0.40;
+
+function confidenceFor(similarity: number): "confident" | "weak" {
+    return similarity >= CONFIDENCE_THRESHOLD ? "confident" : "weak";
+}
 
 export async function searchKnowledgeBase(args: {
     query: string;
@@ -49,6 +39,7 @@ export async function searchKnowledgeBase(args: {
                             content: doc.content,
                             source: doc.source,
                             similarity: doc.similarity,
+                            confidence: confidenceFor(doc.similarity),
                         })
                     ),
                 },

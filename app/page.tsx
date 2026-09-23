@@ -31,6 +31,14 @@ interface PlanStep {
   status: "running" | "completed" | "failed" | "pending_approval";
 }
 
+interface KbResult {
+  id: string;
+  content: string;
+  source: string;
+  similarity: number;
+  confidence: "confident" | "weak";
+}
+
 interface ChatMessage {
   id: string;
   role: MessageRole;
@@ -38,6 +46,7 @@ interface ChatMessage {
   toolUsed?: string;
   traceId?: string;
   planSteps?: PlanStep[];
+  kbResults?: KbResult[];
 }
 
 interface PendingAction {
@@ -152,6 +161,78 @@ function PlanPreview({ steps }: { steps: PlanStep[] }) {
   );
 }
 
+// Context Card — one per retrieved KB chunk, reusing the same click-to-expand
+// interaction already used for trace steps (rotating CaretDown), so this
+// doesn't invent a new pattern. Confidence is shown as a binary dot, never
+// a percentage — the raw similarity number never reaches this component at
+// all, it's already been reduced to "confident" | "weak" server-side.
+function ContextCard({ result }: { result: KbResult }) {
+  const [expanded, setExpanded] = useState(false);
+  const preview =
+    result.content.length > 120
+      ? result.content.slice(0, 120).trimEnd() + "…"
+      : result.content;
+
+  return (
+    <div className="rounded-lg border border-neutral-800/60 bg-neutral-950 overflow-hidden">
+      <button
+        onClick={() => setExpanded((v) => !v)}
+        className="w-full flex items-center justify-between gap-2 px-3 py-2 text-left"
+      >
+        <div className="flex items-center gap-2 min-w-0">
+          <span
+            className={`w-2 h-2 rounded-full shrink-0 ${result.confidence === "confident"
+              ? "bg-yellow-400"
+              : "border border-yellow-400/50"
+              }`}
+            title={result.confidence === "confident" ? "Confident match" : "Weak match"}
+          />
+          <BookOpen size={12} className="text-neutral-500 shrink-0" />
+          <span className="text-xs font-mono text-neutral-400 truncate">
+            {result.source}
+          </span>
+        </div>
+        <motion.div animate={{ rotate: expanded ? 180 : 0 }} className="shrink-0">
+          <CaretDown size={11} className="text-neutral-600" />
+        </motion.div>
+      </button>
+
+      <AnimatePresence>
+        {expanded && (
+          <motion.div
+            initial={{ height: 0, opacity: 0 }}
+            animate={{ height: "auto", opacity: 1 }}
+            exit={{ height: 0, opacity: 0 }}
+            className="overflow-hidden"
+          >
+            <div className="px-3 pb-3 text-xs text-neutral-400 leading-relaxed">
+              {result.content}
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {!expanded && (
+        <div className="px-3 pb-2 -mt-1 text-[11px] text-neutral-600 truncate">
+          {preview}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ContextCards({ results }: { results: KbResult[] }) {
+  if (results.length === 0) return null;
+
+  return (
+    <div className="flex flex-col gap-1.5 mt-2">
+      {results.map((r) => (
+        <ContextCard key={r.id} result={r} />
+      ))}
+    </div>
+  );
+}
+
 function ApprovalCard({
   action,
   onResolve,
@@ -174,6 +255,18 @@ function ApprovalCard({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ action: decision }),
       });
+
+      // A 404 specifically means this action's status is no longer
+      // "pending" — it was already resolved, not a failed request. Telling
+      // someone "network error, may not have been recorded" when the
+      // action actually DID already go through is actively misleading —
+      // it invites a retry that isn't needed and shouldn't happen.
+      if (res.status === 404) {
+        setPendingStatus("failed");
+        setErrorMessage("This action was already resolved — no need to retry.");
+        setStatus("done");
+        return;
+      }
 
       const data = await res.json();
 
@@ -210,8 +303,14 @@ function ApprovalCard({
         // no auto-dismiss on failure — the person needs to see this
       }
     } catch {
+      // A true fetch-level failure (DNS, connection refused) or a response
+      // that couldn't be parsed at all — genuinely unclear whether the
+      // server ever received this, unlike the 404 case above which we
+      // know for certain already resolved.
       setPendingStatus("failed");
-      setErrorMessage("Network error — the action may not have been recorded.");
+      setErrorMessage(
+        "Couldn't reach the server — the action may not have been recorded. Check your connection and try again."
+      );
       setStatus("done");
     }
   };
@@ -618,7 +717,10 @@ export default function Home() {
 
   const send = async () => {
     const text = input.trim();
-    if (!text || streaming) return;
+    // Defense in depth — the composer is already disabled while an action
+    // is pending, but guard the function itself too in case of a race
+    // (e.g. Enter fired a beat before the disabled state re-rendered).
+    if (!text || streaming || pendingActions.length > 0) return;
 
     const userMsg: ChatMessage = {
       id: crypto.randomUUID(),
@@ -699,6 +801,12 @@ export default function Home() {
               setMessages((prev) =>
                 prev.map((m) =>
                   m.id === assistantId ? { ...m, planSteps: currentPlanSteps } : m
+                )
+              );
+            } else if (event.type === "kb_context") {
+              setMessages((prev) =>
+                prev.map((m) =>
+                  m.id === assistantId ? { ...m, kbResults: event.results } : m
                 )
               );
             } else if (event.type === "token") {
@@ -949,6 +1057,9 @@ export default function Home() {
                         className="inline-block w-2 h-4 bg-yellow-400"
                       />
                     ) : null}
+                    {msg.role !== "user" && msg.kbResults && msg.kbResults.length > 0 && (
+                      <ContextCards results={msg.kbResults} />
+                    )}
                   </div>
 
                   {msg.role === "user" && (
@@ -975,6 +1086,12 @@ export default function Home() {
 
           {/* Input */}
           <div className="border-t-2 border-neutral-800 p-4 shrink-0">
+            {pendingActions.length > 0 && (
+              <div className="flex items-center gap-2 mb-2 text-[11px] font-mono uppercase tracking-wider text-yellow-400">
+                <Lightning size={12} weight="fill" />
+                Resolve the pending action above before continuing
+              </div>
+            )}
             <div className="flex gap-3 items-end">
               <div className="flex-1 relative">
                 <textarea
@@ -982,16 +1099,20 @@ export default function Home() {
                   value={input}
                   onChange={(e) => setInput(e.target.value)}
                   onKeyDown={handleKeyDown}
-                  placeholder="Ask anything..."
+                  placeholder={
+                    pendingActions.length > 0
+                      ? "Approve or reject the pending action first..."
+                      : "Ask anything..."
+                  }
                   rows={1}
-                  disabled={streaming}
+                  disabled={streaming || pendingActions.length > 0}
                   style={{ resize: "none" }}
                   className="w-full rounded-xl bg-neutral-950 border border-neutral-800/60 px-4 py-3 text-sm text-neutral-200 placeholder-neutral-700 focus:outline-none focus:border-yellow-400/60 transition-colors disabled:opacity-50 leading-relaxed font-mono"
                 />
               </div>
               <button
                 onClick={send}
-                disabled={streaming || !input.trim()}
+                disabled={streaming || !input.trim() || pendingActions.length > 0}
                 className="p-3 rounded-xl bg-yellow-400 border border-yellow-400 text-black hover:bg-yellow-300 active:scale-[0.97] transition-all disabled:opacity-30 disabled:bg-neutral-800 disabled:border-neutral-800 disabled:text-neutral-600 glow-yellow"
               >
                 {streaming ? (

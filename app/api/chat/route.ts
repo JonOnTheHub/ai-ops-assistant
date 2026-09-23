@@ -166,6 +166,25 @@ export async function POST(req: NextRequest) {
                         status: execResult.result.success ? "completed" : "failed",
                     });
 
+                    // Context Cards: surface the actual retrieved chunks + their
+                    // per-result confidence in the main chat flow, not just
+                    // buried in the trace panel. Only fires for searchKnowledgeBase
+                    // and only when it actually found something — no cards for a
+                    // zero-result search, same "don't decorate when there's
+                    // nothing real to show" rule as the plan preview.
+                    if (
+                        plan.toolName === "searchKnowledgeBase" &&
+                        execResult.result.success &&
+                        Array.isArray(execResult.result.data?.results) &&
+                        execResult.result.data.results.length > 0
+                    ) {
+                        send({
+                            type: "kb_context",
+                            stepIndex,
+                            results: execResult.result.data.results,
+                        });
+                    }
+
                     completedSteps.push({
                         toolName: plan.toolName,
                         args: plan.args,
