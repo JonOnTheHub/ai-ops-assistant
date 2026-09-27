@@ -18,6 +18,7 @@ import {
   ChatCircleDots,
   CaretDown,
   ListMagnifyingGlass,
+  X
 } from "@phosphor-icons/react";
 import ReactMarkdown from "react-markdown";
 
@@ -161,11 +162,17 @@ function PlanPreview({ steps }: { steps: PlanStep[] }) {
   );
 }
 
-// Context Card — one per retrieved KB chunk, reusing the same click-to-expand
-// interaction already used for trace steps (rotating CaretDown), so this
-// doesn't invent a new pattern. Confidence is shown as a binary dot, never
-// a percentage — the raw similarity number never reaches this component at
-// all, it's already been reduced to "confident" | "weak" server-side.
+// ─────────────────────────────────────────────────────────────────────
+// Context Cards — three pieces:
+//   ContextCard        existing stacked, expand-in-place card (unchanged)
+//   ContextCardBox     new compact box: filename + confidence dot only
+//   ContextCardModal   new from-scratch overlay showing full content
+//   ContextCards       container — branches by result count:
+//                        <= 2 results: stacked ContextCard list (as before)
+//                        >= 3 results: horizontal scrollable strip of
+//                          ContextCardBox, click opens ContextCardModal
+// ─────────────────────────────────────────────────────────────────────
+
 function ContextCard({ result }: { result: KbResult }) {
   const [expanded, setExpanded] = useState(false);
   const preview =
@@ -221,15 +228,138 @@ function ContextCard({ result }: { result: KbResult }) {
   );
 }
 
-function ContextCards({ results }: { results: KbResult[] }) {
-  if (results.length === 0) return null;
+// Compact box for the crowded case — filename + confidence dot only, no
+// text preview. Trades the current design's glanceability for actually
+// fitting several results without dominating the reply vertically; the
+// full content is one click away in the modal, not gone.
+function ContextCardBox({
+  result,
+  onOpen,
+}: {
+  result: KbResult;
+  onOpen: () => void;
+}) {
+  return (
+    <button
+      onClick={onOpen}
+      className="flex items-center gap-2 shrink-0 px-3 py-2 rounded-lg border border-neutral-800/60 bg-neutral-950 hover:border-yellow-400/40 transition-colors max-w-[160px]"
+    >
+      <span
+        className={`w-2 h-2 rounded-full shrink-0 ${result.confidence === "confident"
+          ? "bg-yellow-400"
+          : "border border-yellow-400/50"
+          }`}
+        title={result.confidence === "confident" ? "Confident match" : "Weak match"}
+      />
+      <BookOpen size={12} className="text-neutral-500 shrink-0" />
+      <span className="text-xs font-mono text-neutral-400 truncate">
+        {result.source}
+      </span>
+    </button>
+  );
+}
+
+// From-scratch overlay — no prior modal pattern existed in this codebase
+// to reuse. Deliberately NOT using the hazard-stripe motif: that's
+// reserved exclusively for approval/pending-approval states, and this is
+// neither.
+function ContextCardModal({
+  result,
+  onClose,
+}: {
+  result: KbResult;
+  onClose: () => void;
+}) {
+  useEffect(() => {
+    const onKeyDown = (e: globalThis.KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [onClose]);
 
   return (
-    <div className="flex flex-col gap-1.5 mt-2">
-      {results.map((r) => (
-        <ContextCard key={r.id} result={r} />
-      ))}
-    </div>
+    <motion.div
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      exit={{ opacity: 0 }}
+      onClick={onClose}
+      className="fixed inset-0 z-50 bg-black/70 flex items-center justify-center p-4"
+    >
+      <motion.div
+        initial={{ opacity: 0, scale: 0.96 }}
+        animate={{ opacity: 1, scale: 1 }}
+        exit={{ opacity: 0, scale: 0.96 }}
+        onClick={(e) => e.stopPropagation()}
+        className="w-full max-w-lg max-h-[80vh] rounded-xl border border-neutral-800 bg-black overflow-hidden flex flex-col"
+      >
+        <div className="flex items-center justify-between gap-3 px-4 py-3 border-b border-neutral-800 shrink-0">
+          <div className="flex items-center gap-2 min-w-0">
+            <span
+              className={`w-2 h-2 rounded-full shrink-0 ${result.confidence === "confident"
+                ? "bg-yellow-400"
+                : "border border-yellow-400/50"
+                }`}
+            />
+            <BookOpen size={13} className="text-neutral-500 shrink-0" />
+            <span className="text-xs font-mono text-neutral-300 truncate">
+              {result.source}
+            </span>
+            <span className="text-[10px] font-mono uppercase tracking-wider text-neutral-600 shrink-0">
+              {result.confidence === "confident" ? "Confident" : "Weak"}
+            </span>
+          </div>
+          <button
+            onClick={onClose}
+            className="text-neutral-500 hover:text-neutral-200 transition-colors shrink-0"
+          >
+            <X size={16} />
+          </button>
+        </div>
+
+        <div className="px-4 py-3 overflow-y-auto text-sm text-neutral-300 leading-relaxed">
+          {result.content}
+        </div>
+      </motion.div>
+    </motion.div>
+  );
+}
+
+function ContextCards({ results }: { results: KbResult[] }) {
+  const [openResult, setOpenResult] = useState<KbResult | null>(null);
+
+  if (results.length === 0) return null;
+
+  // Only switches to the compact box+modal treatment once there are
+  // enough results to actually crowd the reply — 1-2 results read fine
+  // stacked, same as before.
+  if (results.length <= 2) {
+    return (
+      <div className="flex flex-col gap-1.5 mt-2">
+        {results.map((r) => (
+          <ContextCard key={r.id} result={r} />
+        ))}
+      </div>
+    );
+  }
+
+  return (
+    <>
+      <div className="flex gap-1.5 mt-2 overflow-x-auto pb-1">
+        {results.map((r) => (
+          <ContextCardBox key={r.id} result={r} onOpen={() => setOpenResult(r)} />
+        ))}
+      </div>
+
+      <AnimatePresence>
+        {openResult && (
+          <ContextCardModal
+            result={openResult}
+            onClose={() => setOpenResult(null)}
+          />
+        )}
+      </AnimatePresence>
+    </>
   );
 }
 
