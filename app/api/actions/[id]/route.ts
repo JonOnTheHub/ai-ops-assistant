@@ -3,7 +3,8 @@ import { createClient } from "@supabase/supabase-js";
 import { sendEmail } from "@/lib/tools/sendEmail";
 import { sendBroadcast } from "@/lib/tools/sendBroadcast";
 import { writeTrace } from "@/lib/tracing";
-import { ToolName, BroadcastRecipient } from "@/types";
+import { classifyToolResult, classifyThrown } from "@/lib/agent/classifier";
+import { ToolName, ToolResult, BroadcastRecipient } from "@/types";
 
 const supabase = createClient(
     process.env.SUPABASE_URL!,
@@ -12,7 +13,7 @@ const supabase = createClient(
 
 // Tool execution map for approved actions
 // Only needs-approval tools live here
-type ApprovalFn = (args: Record<string, unknown>) => Promise<unknown>;
+type ApprovalFn = (args: Record<string, unknown>) => Promise<ToolResult>;
 
 const APPROVAL_EXECUTORS: Partial<Record<ToolName, ApprovalFn>> = {
     sendEmail: (args) =>
@@ -82,6 +83,14 @@ export async function POST(
         const result = await executor(pending.proposed_args);
         const latency_ms = Date.now() - start;
 
+        // This is the only place sendBroadcast (and sendEmail) actually run —
+        // the chat-loop executor never gets past the pending-approval branch
+        // for a needs-approval tool. So this is where partial_success first
+        // becomes visible: the tool really did execute, and some sends may
+        // have failed. classifyToolResult reads the real per-recipient
+        // results[] sendBroadcast already returns — no tool change needed.
+        const errorInfo = classifyToolResult(pending.tool_name as ToolName, result);
+
         await supabase
             .from("pending_actions")
             .update({ status: "approved", resolved_at: new Date().toISOString() })
@@ -92,25 +101,37 @@ export async function POST(
             step: "tool_call",
             tool_name: pending.tool_name as ToolName,
             input: pending.proposed_args,
-            output: result as Record<string, unknown>,
-            status: "success",
+            output: {
+                ...(result as unknown as Record<string, unknown>),
+                ...(errorInfo ? { errorInfo } : {}),
+            },
+            // Same rule as executor.ts: success:true with a routed error
+            // attached (partial_success) is not a clean success in the trace.
+            status: result.success && !errorInfo ? "success" : "error",
             latency_ms,
         });
 
-        return NextResponse.json({ success: true, status: "approved", result });
+        return NextResponse.json({ success: true, status: "approved", result, errorInfo });
     } catch (err) {
+        // Both sendEmail and sendBroadcast catch their own errors and return
+        // {success:false} rather than throwing — so reaching this block means
+        // something outside the tool itself broke (Resend SDK throwing
+        // synchronously, a genuine bug). Nothing from this tool executed
+        // (the tool never got to return), so a retry is safe.
+        const errorInfo = classifyThrown(err, { completedTools: [] });
+
         await writeTrace({
             trace_id: pending.trace_id,
             step: "tool_call",
             tool_name: pending.tool_name as ToolName,
             input: pending.proposed_args,
-            output: { error: String(err) },
+            output: { error: String(err), errorInfo },
             status: "error",
             latency_ms: Date.now() - start,
         });
 
         return NextResponse.json(
-            { error: `Execution failed: ${String(err)}` },
+            { error: `Execution failed: ${String(err)}`, errorInfo },
             { status: 500 }
         );
     }

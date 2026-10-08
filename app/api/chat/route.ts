@@ -5,6 +5,7 @@ import { randomUUID } from "crypto";
 import { runPlanner, PlannerStep } from "@/lib/agent/planner";
 import { executeTool } from "@/lib/agent/executor";
 import { manageShortTermMemory } from "@/lib/agent/memory";
+import { classifyThrown } from "@/lib/agent/classifier";
 import { writeTrace } from "@/lib/tracing";
 import { Message, AgentRequest } from "@/types";
 
@@ -47,6 +48,11 @@ export async function POST(req: NextRequest) {
         async start(controller) {
             let streamClosed = false;
 
+            // Declared here (not inside try) so the catch block can see how
+            // far the turn got — retry safety depends on knowing which
+            // side-effecting tools, if any, already ran before the throw.
+            const completedSteps: PlannerStep[] = [];
+
             const send = (data: object) => {
                 if (streamClosed) return;
                 try {
@@ -85,8 +91,6 @@ export async function POST(req: NextRequest) {
                 // is done (direct_response), a needs-approval tool is picked
                 // (halt for human approval, unchanged from before), or the
                 // step cap is hit.
-                const completedSteps: PlannerStep[] = [];
-
                 send({ type: "status", message: "Thinking..." });
                 let plan = await runPlanner(message, history, trace_id, completedSteps);
 
@@ -165,6 +169,21 @@ export async function POST(req: NextRequest) {
                         toolName: plan.toolName,
                         status: execResult.result.success ? "completed" : "failed",
                     });
+
+                    // Routed error: the tool returned (didn't throw), but the
+                    // classifier found something worth reporting — a real
+                    // failure, or a "ran fine but resolved to nothing" case
+                    // like resolveAudience matching 0 people. This never halts
+                    // the loop; the planner still gets the raw result on its
+                    // next call and decides how to proceed or explain.
+                    if (execResult.errorInfo) {
+                        send({
+                            type: "tool_error",
+                            stepIndex,
+                            toolName: plan.toolName,
+                            errorInfo: execResult.errorInfo,
+                        });
+                    }
 
                     // Context Cards: surface the actual retrieved chunks + their
                     // per-result confidence in the main chat flow, not just
@@ -302,16 +321,20 @@ ${toolContext}`;
             } catch (err) {
                 console.error("[chat] stream error:", err);
 
+                const errorInfo = classifyThrown(err, {
+                    completedTools: completedSteps.map((step) => step.toolName),
+                });
+
                 await writeTrace({
                     trace_id,
                     step: "final_response",
                     input: { message },
-                    output: { error: String(err) },
+                    output: { error: String(err), errorInfo },
                     status: "error",
                     latency_ms: 0,
                 });
 
-                send({ type: "error", message: "Something went wrong. Please try again." });
+                send({ type: "error", message: errorInfo.summary, errorInfo });
                 closeStream();
             }
         },

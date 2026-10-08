@@ -1,16 +1,14 @@
 import { APIConnectionError, APIConnectionTimeoutError } from "groq-sdk";
 import { getToolTier } from "@/lib/tools";
+import { VALIDATOR_ERROR_PREFIX } from "./validator";
 import { ToolName, ToolResult } from "@/types";
 import { ErrorInfo, FailedItem, SystemCause, ThrownContext } from "@/types/errors";
 
 // Deterministic, no LLM, no I/O. Two entry points:
 //   classifyToolResult — a tool RETURNED (success or failure). null = clean success.
 //   classifyThrown     — something THREW (planner call, DB, stream, etc).
-// Nothing here is wired into the chat flow yet (Layer 2 does that).
-
-// Must match the prefix validator.ts puts on shape failures.
-// Layer 2 exports it from validator.ts so this duplicate goes away.
-const VALIDATOR_PREFIX = "[validator]";
+// Wired into lib/agent/executor.ts, app/api/chat/route.ts and
+// app/api/actions/[id]/route.ts.
 
 const TOOL_LABEL: Record<ToolName, string> = {
     searchKnowledgeBase: "the knowledge base search",
@@ -51,7 +49,7 @@ function shortReason(raw: string | undefined): string {
 // ── Tool results ──────────────────────────────────────────────
 
 function classifyFailedResult(toolName: ToolName, result: ToolResult): ErrorInfo {
-    if (result.error?.startsWith(VALIDATOR_PREFIX)) {
+    if (result.error?.startsWith(VALIDATOR_ERROR_PREFIX)) {
         return {
             kind: "tool_failure",
             source: "system",

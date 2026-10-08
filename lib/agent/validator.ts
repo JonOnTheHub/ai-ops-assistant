@@ -14,6 +14,10 @@ const EXPECTED_FIELDS: Partial<Record<ToolName, string[]>> = {
     sendBroadcast: ["results", "sent_count", "failed_count", "total"],
 };
 
+// Exported so other modules (currently lib/agent/classifier.ts) can detect
+// a validator-originated failure by prefix instead of duplicating this string.
+export const VALIDATOR_ERROR_PREFIX = "[validator]";
+
 export function validateToolResult(
     toolName: ToolName,
     result: ToolResult
@@ -32,7 +36,7 @@ export function validateToolResult(
     if (missing.length > 0) {
         return {
             success: false,
-            error: `[validator] ${toolName} returned unexpected shape. Missing fields: ${missing.join(", ")}`,
+            error: `${VALIDATOR_ERROR_PREFIX} ${toolName} returned unexpected shape. Missing fields: ${missing.join(", ")}`,
         };
     }
 

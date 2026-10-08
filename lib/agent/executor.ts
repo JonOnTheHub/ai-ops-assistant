@@ -9,7 +9,9 @@ import { sendEmail } from "@/lib/tools/sendEmail";
 import { resolveAudience } from "@/lib/tools/resolveAudience";
 import { sendBroadcast } from "@/lib/tools/sendBroadcast";
 import { validateToolResult } from "./validator";
+import { classifyToolResult } from "./classifier";
 import { ToolName, ToolResult, BroadcastRecipient } from "@/types";
+import { ErrorInfo } from "@/types/errors";
 
 type ToolFn = (args: Record<string, unknown>) => Promise<ToolResult>;
 
@@ -34,7 +36,7 @@ const TOOL_IMPLEMENTATIONS: Record<ToolName, ToolFn> = {
 };
 
 export type ExecutorResult =
-  | { type: "result"; toolName: ToolName; result: ToolResult; latency_ms: number }
+  | { type: "result"; toolName: ToolName; result: ToolResult; errorInfo: ErrorInfo | null; latency_ms: number }
   | { type: "pending"; pendingActionId: string; toolName: ToolName; args: Record<string, unknown> };
 
 export async function executeTool(
@@ -93,15 +95,26 @@ export async function executeTool(
 
   const result = validateToolResult(toolName, rawResult);
 
+  // Classified here, once, so every caller (the chat loop today; anything
+  // else later) gets the same routed error instead of re-deriving it.
+  // null = clean success, nothing to report.
+  const errorInfo = classifyToolResult(toolName, result);
+
   await writeTrace({
     trace_id,
     step: "tool_call",
     tool_name: toolName,
     input: args,
-    output: result as unknown as Record<string, unknown>,
-    status: result.success ? "success" : "error",
+    output: {
+      ...(result as unknown as Record<string, unknown>),
+      ...(errorInfo ? { errorInfo } : {}),
+    },
+    // A tool can report success:true and still have a routed error attached
+    // (partial_success — sendBroadcast really did run). Trace status reflects
+    // that: only a clean, fully-successful result is "success".
+    status: result.success && !errorInfo ? "success" : "error",
     latency_ms,
   });
 
-  return { type: "result", toolName, result, latency_ms };
+  return { type: "result", toolName, result, errorInfo, latency_ms };
 }
