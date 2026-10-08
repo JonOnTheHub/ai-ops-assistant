@@ -18,9 +18,13 @@ import {
   ChatCircleDots,
   CaretDown,
   ListMagnifyingGlass,
+  Info,
+  Warning,
+  WarningCircle,
   X
 } from "@phosphor-icons/react";
 import ReactMarkdown from "react-markdown";
+import type { ErrorInfo, ErrorKind } from "@/types/errors";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -48,6 +52,13 @@ interface ChatMessage {
   traceId?: string;
   planSteps?: PlanStep[];
   kbResults?: KbResult[];
+  // Mid-turn routed errors (tool_error events): rendered as one-line strips
+  // above the reply. The model still explains in its own words.
+  notices?: ErrorInfo[];
+  // Set when this message IS a routed error (final error event, or an
+  // approval that partly/fully failed). `content` still holds the plain
+  // summary string, because that string is also the conversation history.
+  errorInfo?: ErrorInfo;
 }
 
 interface PendingAction {
@@ -82,6 +93,8 @@ interface StepConfigEntry {
 }
 
 type ApprovalStatus = "idle" | "approving" | "rejecting" | "done";
+
+type ResolveOutcome = "approved" | "rejected" | "failed" | "partial";
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -363,17 +376,113 @@ function ContextCards({ results }: { results: KbResult[] }) {
   );
 }
 
+// ─── Routed errors ────────────────────────────────────────────────────────────
+// Every failure the server reports arrives as one of three kinds. Tone is
+// deliberately different per kind: "nothing matched" is not an alarm, a real
+// failure is red, and a partial result is yellow-outlined. No hazard stripe
+// here, that stays reserved for approval states.
+
+interface ErrorTone {
+  Icon: ElementType;
+  text: string;
+  box: string;
+}
+
+const ERROR_TONE: Record<ErrorKind, ErrorTone> = {
+  misunderstood: {
+    Icon: Info,
+    text: "text-neutral-400",
+    box: "bg-neutral-950 border-neutral-700/60",
+  },
+  tool_failure: {
+    Icon: WarningCircle,
+    text: "text-red-400",
+    box: "bg-red-950/30 border-red-900/50",
+  },
+  partial_success: {
+    Icon: Warning,
+    text: "text-yellow-400",
+    box: "bg-black border-yellow-400/40",
+  },
+};
+
+function noticeLabel(info: ErrorInfo): string {
+  if (info.kind === "misunderstood") return "Couldn't resolve that";
+  if (info.kind === "partial_success") return "Partly done";
+  return info.source === "system" ? "System issue" : "Tool failed";
+}
+
+// SSE and fetch payloads are untyped JSON. Check the shape before rendering
+// so a malformed payload can never crash the chat.
+function isErrorInfo(value: unknown): value is ErrorInfo {
+  if (typeof value !== "object" || value === null) return false;
+  const v = value as Record<string, unknown>;
+  if (typeof v.summary !== "string") return false;
+  if (v.kind === "misunderstood" || v.kind === "tool_failure") return true;
+  return v.kind === "partial_success" && Array.isArray(v.succeeded) && Array.isArray(v.failed);
+}
+
+function ErrorNotice({ info, compact = false }: { info: ErrorInfo; compact?: boolean }) {
+  const tone = ERROR_TONE[info.kind];
+  const Icon = tone.Icon;
+  const label = noticeLabel(info);
+
+  if (compact) {
+    return (
+      <div className={`flex items-start gap-2 text-[11px] font-mono mb-2 ${tone.text}`}>
+        <Icon size={12} weight="fill" className="mt-0.5 shrink-0" />
+        <span>
+          <span className="uppercase tracking-wider">{label}</span>
+          <span className="text-neutral-500"> — {info.summary}</span>
+        </span>
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-2">
+      <div className={`flex items-center gap-2 text-xs font-mono uppercase tracking-wider ${tone.text}`}>
+        <Icon size={13} weight="fill" />
+        {label}
+      </div>
+      <div className="text-sm text-neutral-300 leading-relaxed">{info.summary}</div>
+      {info.kind === "partial_success" && (
+        <div className="space-y-1.5 text-xs font-mono">
+          <div className="text-neutral-400">
+            <span className="text-neutral-600 uppercase text-[10px] tracking-wider">
+              Sent ({info.succeeded.length}){" "}
+            </span>
+            <span className="text-neutral-200">{info.succeeded.join(", ")}</span>
+          </div>
+          <div className="text-neutral-400">
+            <span className="text-yellow-400/80 uppercase text-[10px] tracking-wider">
+              Failed ({info.failed.length})
+            </span>
+            {info.failed.map((item) => (
+              <div key={item.name} className="pl-3 text-neutral-300">
+                {item.name}
+                <span className="text-neutral-600"> — {item.reason}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function ApprovalCard({
   action,
   onResolve,
 }: {
   action: PendingAction;
-  onResolve: (id: string, outcome: "approved" | "rejected" | "failed", detail?: string) => void;
+  onResolve: (id: string, outcome: ResolveOutcome, detail?: string, errorInfo?: ErrorInfo) => void;
 }) {
   const [status, setStatus] = useState<ApprovalStatus>("idle");
-  const [pendingStatus, setPendingStatus] = useState<"approved" | "rejected" | "failed" | null>(null);
+  const [pendingStatus, setPendingStatus] = useState<ResolveOutcome | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [resultMessage, setResultMessage] = useState<string | null>(null);
+  const [failureInfo, setFailureInfo] = useState<ErrorInfo | null>(null);
 
   const handle = async (decision: "approve" | "reject") => {
     setStatus(decision === "approve" ? "approving" : "rejecting");
@@ -386,48 +495,72 @@ function ApprovalCard({
         body: JSON.stringify({ action: decision }),
       });
 
-      // A 404 specifically means this action's status is no longer
-      // "pending" — it was already resolved, not a failed request. Telling
-      // someone "network error, may not have been recorded" when the
-      // action actually DID already go through is actively misleading —
-      // it invites a retry that isn't needed and shouldn't happen.
-      if (res.status === 404) {
+      const isJson = (res.headers.get("content-type") ?? "").includes("application/json");
+
+      // A JSON 404 comes from OUR handler: the action is no longer "pending",
+      // i.e. it was already resolved. Telling someone "network error, may not
+      // have been recorded" there would invite a retry that isn't needed.
+      if (res.status === 404 && isJson) {
         setPendingStatus("failed");
         setErrorMessage("This action was already resolved — no need to retry.");
         setStatus("done");
         return;
       }
 
+      // A non-JSON 404 is the framework's own not-found page. The request
+      // never reached our handler, so nothing ran and the action is still
+      // pending. Keep the buttons live instead of declaring it resolved.
+      if (res.status === 404) {
+        setErrorMessage(
+          "The approval endpoint wasn't found (HTTP 404), so nothing was sent and the action is still pending. Try Approve again. If it keeps happening, the server needs a restart or redeploy."
+        );
+        setStatus("idle");
+        return;
+      }
+
       const data = await res.json();
 
       if (decision === "reject") {
+        if (!res.ok) {
+          setPendingStatus("failed");
+          setErrorMessage(data.error ?? "Couldn't record the rejection.");
+          setStatus("done");
+          return;
+        }
         setPendingStatus("rejected");
         setStatus("done");
         setTimeout(() => onResolve(action.id, "rejected"), 1200);
         return;
       }
 
+      // decision === "approve". The route attaches a routed errorInfo, or null
+      // for a clean success. Check it instead of trusting the tool's own
+      // success flag: sendBroadcast reports success:true even when some or
+      // all sends failed.
+      const info: ErrorInfo | null = isErrorInfo(data.errorInfo) ? data.errorInfo : null;
+      const toolRan = res.ok && data.success && data.result?.success;
+      const summary: string = data.result?.data?.message ?? "Action completed.";
 
-      // decision === "approve" — verify the tool actually succeeded,
-      // not just that the HTTP request completed
-      const toolSucceeded = res.ok && data.success && data.result?.success;
-
-      if (toolSucceeded) {
-        // Every needs-approval tool returns its own human-readable summary
-        // in data.message (e.g. "Email sent to x@y.com." or "9/12 sent —
-        // 3 failed."). Use that directly instead of hardcoding per-tool
-        // detail strings here — this is what actually broke for broadcast
-        // ("Sent to recipient") since that string only ever knew about
-        // sendEmail's single `to` field.
-        const summary: string = data.result?.data?.message ?? "Action completed.";
+      if (toolRan && !info) {
         setResultMessage(summary);
         setPendingStatus("approved");
         setStatus("done");
         setTimeout(() => onResolve(action.id, "approved", summary), 2500);
+      } else if (toolRan && info?.kind === "partial_success") {
+        // The tool really ran and some sends went through. Resolve into a chat
+        // message that carries the succeeded and failed sets, instead of
+        // vanishing behind a success check.
+        setResultMessage(info.summary);
+        setPendingStatus("partial");
+        setStatus("done");
+        setTimeout(() => onResolve(action.id, "partial", summary, info), 1500);
       } else {
+        // A hard failure, or the tool "succeeded" while delivering nothing
+        // (every send failed). Show the routed summary and keep the card up.
+        setFailureInfo(info);
         setPendingStatus("failed");
         setErrorMessage(
-          data.result?.error || data.error || "Unknown error — check the trace log."
+          info?.summary ?? data.result?.error ?? data.error ?? "Unknown error — check the trace log."
         );
         setStatus("done");
         // no auto-dismiss on failure — the person needs to see this
@@ -511,6 +644,12 @@ function ApprovalCard({
           )}
         </div>
 
+        {status !== "done" && errorMessage && (
+          <div className="text-[10px] text-red-400/80 font-mono bg-red-950/30 border border-red-900 p-2 leading-relaxed">
+            {errorMessage}
+          </div>
+        )}
+
         {status === "done" ? (
           <motion.div
             initial={{ opacity: 0, y: 4 }}
@@ -518,7 +657,7 @@ function ApprovalCard({
             className="space-y-2"
           >
             <div
-              className={`flex items-center gap-2 text-xs font-mono uppercase tracking-wider ${pendingStatus === "approved"
+              className={`flex items-center gap-2 text-xs font-mono uppercase tracking-wider ${pendingStatus === "approved" || pendingStatus === "partial"
                 ? "text-yellow-400"
                 : pendingStatus === "failed"
                   ? "text-red-500"
@@ -527,12 +666,16 @@ function ApprovalCard({
             >
               {pendingStatus === "failed" ? (
                 <XCircle size={13} weight="fill" />
+              ) : pendingStatus === "partial" ? (
+                <Warning size={13} weight="fill" />
               ) : (
                 <CheckCircle size={13} weight="fill" />
               )}
               {pendingStatus === "approved"
                 ? resultMessage ?? "Action completed."
-                : pendingStatus === "failed"
+                : pendingStatus === "partial"
+                  ? resultMessage ?? "Partly sent."
+                  : pendingStatus === "failed"
                   ? "Send failed."
                   : "Action rejected."}
             </div>
@@ -545,7 +688,7 @@ function ApprovalCard({
                   </div>
                 )}
                 <button
-                  onClick={() => onResolve(action.id, "failed", errorMessage ?? "Action failed.")}
+                  onClick={() => onResolve(action.id, "failed", errorMessage ?? "Action failed.", failureInfo ?? undefined)}
                   className="text-[10px] text-neutral-500 hover:text-neutral-300 font-mono uppercase tracking-wider underline underline-offset-2"
                 >
                   Dismiss
@@ -966,6 +1109,19 @@ export default function Home() {
                   steps: event.steps,
                 },
               ]);
+            } else if (event.type === "tool_error") {
+              // A tool step returned something the classifier flagged. Never
+              // halts the turn; shown as a strip above the model's reply.
+              if (isErrorInfo(event.errorInfo)) {
+                const notice: ErrorInfo = event.errorInfo;
+                setMessages((prev) =>
+                  prev.map((m) =>
+                    m.id === assistantId
+                      ? { ...m, notices: [...(m.notices ?? []), notice] }
+                      : m
+                  )
+                );
+              }
             } else if (event.type === "done") {
               setStatusText("");
             } else if (event.type === "error") {
@@ -976,6 +1132,7 @@ export default function Home() {
                       ...m,
                       content: event.message ?? "Something went wrong.",
                       role: "system",
+                      errorInfo: isErrorInfo(event.errorInfo) ? event.errorInfo : undefined,
                     }
                     : m
                 )
@@ -1012,8 +1169,9 @@ export default function Home() {
 
   const resolveAction = (
     id: string,
-    outcome: "approved" | "rejected" | "failed",
-    detail?: string
+    outcome: ResolveOutcome,
+    detail?: string,
+    errorInfo?: ErrorInfo
   ) => {
     const resolved = pendingActions.find((a) => a.id === id);
 
@@ -1026,16 +1184,21 @@ export default function Home() {
       const content =
         outcome === "approved"
           ? `Done — ${detail ?? `${resolved.toolName} completed.`}`
-          : outcome === "rejected"
-            ? `Okay, I didn't send that — you rejected it.`
-            : `That didn't go through: ${detail ?? "the action failed."}`;
+          : outcome === "partial"
+            ? `Partly done — ${detail ?? `${resolved.toolName} partly completed.`}`
+            : outcome === "rejected"
+              ? `Okay, I didn't send that — you rejected it.`
+              : `That didn't go through: ${detail ?? "the action failed."}`;
 
+      // `content` stays the plain string (display fallback AND model history).
+      // errorInfo rides alongside it so the bubble can render structured recovery.
       setMessages((prev) => [
         ...prev,
         {
           id: crypto.randomUUID(),
           role: "assistant",
           content,
+          ...(errorInfo ? { errorInfo } : {}),
         },
       ]);
     }
@@ -1164,15 +1327,24 @@ export default function Home() {
                   <div
                     className={`max-w-[78%] px-4 py-3 text-sm leading-relaxed rounded-2xl border ${msg.role === "user"
                       ? "bg-neutral-900 text-neutral-100 border-neutral-800/60 rounded-tr-sm"
-                      : msg.role === "system"
-                        ? "bg-red-950/30 border-red-900/50 text-red-400"
-                        : "bg-black border-neutral-800/60 text-neutral-200 rounded-tl-sm"
+                      : msg.errorInfo
+                        ? `${ERROR_TONE[msg.errorInfo.kind].box} text-neutral-200 rounded-tl-sm`
+                        : msg.role === "system"
+                          ? "bg-red-950/30 border-red-900/50 text-red-400"
+                          : "bg-black border-neutral-800/60 text-neutral-200 rounded-tl-sm"
                       }`}
                   >
                     {msg.role !== "user" && msg.planSteps && msg.planSteps.length > 0 && (
                       <PlanPreview steps={msg.planSteps} />
                     )}
-                    {msg.content ? (
+                    {msg.role !== "user" &&
+                      msg.notices &&
+                      msg.notices.map((notice, i) => (
+                        <ErrorNotice key={i} info={notice} compact />
+                      ))}
+                    {msg.errorInfo ? (
+                      <ErrorNotice info={msg.errorInfo} />
+                    ) : msg.content ? (
                       msg.role === "user" ? (
                         msg.content
                       ) : (
