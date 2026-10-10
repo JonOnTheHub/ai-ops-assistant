@@ -225,14 +225,26 @@ export async function runPlanner(
             // confidently fabricate figures instead. A visible error is safer
             // than a silent wrong answer.
             console.error("[planner] tool-enabled call failed twice, giving up honestly:", retryErr);
-            return finish(
-                {
-                    type: "direct_response",
-                    content: "I ran into a technical issue processing that — could you try asking again?",
-                    traceLatency: Date.now() - start,
+
+            // Record the failure on the plan step, then rethrow so the chat route
+            // classifies it (rate limit, timeout, rejected request...) and shows a
+            // typed error with a retry where one is safe. Returning a friendly
+            // sentence here used to hide the real cause, and told people to try
+            // again even when the failure was a schema bug on our side.
+            await writeTrace({
+                trace_id,
+                step: "plan",
+                input: {
+                    userMessage,
+                    memoryCount: memories.length,
+                    stepIndex: priorSteps.length,
+                    retriedAndFailed: true,
                 },
-                { recoveredFromApiError: true, retriedAndFailed: true }
-            );
+                output: { error: String(retryErr) },
+                status: "error",
+                latency_ms: Date.now() - start,
+            });
+            throw retryErr;
         }
     }
 
