@@ -40,6 +40,14 @@ function isSideEffectTool(toolName: ToolName): boolean {
     return getToolTier(toolName) !== "auto";
 }
 
+// True if any of these tools has side effects. The chat route uses it to tell
+// the client whether re-running a whole turn is safe: a turn that already ran
+// createTask must never be re-run by a retry button, even when the step that
+// later failed was a harmless read.
+export function anySideEffects(toolNames: ToolName[]): boolean {
+    return toolNames.some(isSideEffectTool);
+}
+
 function shortReason(raw: string | undefined): string {
     if (!raw) return "no reason reported";
     const cleaned = raw.replace(/^Error:\s*/, "").trim();

@@ -1,5 +1,5 @@
 import { APIConnectionError, APIConnectionTimeoutError, RateLimitError } from "groq-sdk";
-import { classifyToolResult, classifyThrown } from "@/lib/agent/classifier";
+import { classifyToolResult, classifyThrown, anySideEffects } from "@/lib/agent/classifier";
 import { ToolResult } from "@/types";
 import { ErrorInfo } from "@/types/errors";
 
@@ -123,6 +123,13 @@ check("thrown after only auto-tier tools -> retryable", afterAuto.kind === "tool
 const afterTask = thrown(new Error("x"), ["searchKnowledgeBase", "createTask"]);
 check("thrown after createTask ran -> NOT retryable", afterTask.kind === "tool_failure" && afterTask.retryable === false, afterTask);
 check("thrown after createTask ran -> summary says what already went through", afterTask.summary.includes("creating the task"), afterTask.summary);
+
+// ── anySideEffects: gates the client's Retry button ──
+check("anySideEffects: no tools -> false", anySideEffects([]) === false);
+check("anySideEffects: only auto-tier reads -> false", anySideEffects(["searchKnowledgeBase", "getCustomer", "resolveAudience"]) === false);
+check("anySideEffects: a read then createTask -> true", anySideEffects(["searchKnowledgeBase", "createTask"]) === true);
+check("anySideEffects: createLead -> true", anySideEffects(["createLead"]) === true);
+check("anySideEffects: needs-approval tool -> true", anySideEffects(["sendEmail"]) === true);
 
 console.log(failures === 0 ? "\nAll checks passed." : `\n${failures} check(s) FAILED.`);
 process.exit(failures === 0 ? 0 : 1);

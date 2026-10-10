@@ -59,6 +59,9 @@ interface ChatMessage {
   // approval that partly/fully failed). `content` still holds the plain
   // summary string, because that string is also the conversation history.
   errorInfo?: ErrorInfo;
+  // Server-set on the done event: no side-effecting tool ran this turn, so
+  // re-running it cannot duplicate anything. Gates the Retry button.
+  retrySafe?: boolean;
 }
 
 interface PendingAction {
@@ -422,7 +425,43 @@ function isErrorInfo(value: unknown): value is ErrorInfo {
   return v.kind === "partial_success" && Array.isArray(v.succeeded) && Array.isArray(v.failed);
 }
 
-function ErrorNotice({ info, compact = false }: { info: ErrorInfo; compact?: boolean }) {
+function isRetryable(info: ErrorInfo): boolean {
+  return info.kind === "tool_failure" && info.retryable;
+}
+
+// A turn is only worth re-running when at least one notice is retryable and
+// none of its tool failures is a "don't retry" kind (for example a result
+// the validator couldn't trust).
+function turnIsRetryable(notices: ErrorInfo[]): boolean {
+  return notices.some(isRetryable) && notices.every((n) => n.kind !== "tool_failure" || n.retryable);
+}
+
+// Works out how to re-run the turn behind the LAST message. That message must
+// be an assistant reply sitting directly after the user message it answers.
+// `history` is everything before that user message (the server appends the
+// text itself, so including it would show the model the message twice);
+// `kept` is what stays on screen while the fresh reply streams in.
+function planRetry(messages: ChatMessage[]): { text: string; history: ChatMessage[]; kept: ChatMessage[] } | null {
+  const failedIdx = messages.length - 1;
+  if (failedIdx < 1 || messages[failedIdx].role === "user") return null;
+  const userMsg = messages[failedIdx - 1];
+  if (userMsg.role !== "user") return null;
+  return {
+    text: userMsg.content,
+    history: messages.slice(0, failedIdx - 1),
+    kept: messages.slice(0, failedIdx),
+  };
+}
+
+function ErrorNotice({
+  info,
+  compact = false,
+  onRetry,
+}: {
+  info: ErrorInfo;
+  compact?: boolean;
+  onRetry?: () => void;
+}) {
   const tone = ERROR_TONE[info.kind];
   const Icon = tone.Icon;
   const label = noticeLabel(info);
@@ -434,6 +473,15 @@ function ErrorNotice({ info, compact = false }: { info: ErrorInfo; compact?: boo
         <span>
           <span className="uppercase tracking-wider">{label}</span>
           <span className="text-neutral-500"> — {info.summary}</span>
+          {onRetry && (
+            <button
+              onClick={onRetry}
+              className="ml-2 inline-flex items-center gap-1 text-neutral-300 hover:text-neutral-100 uppercase tracking-wider underline underline-offset-2"
+            >
+              <ArrowClockwise size={10} />
+              Retry
+            </button>
+          )}
         </span>
       </div>
     );
@@ -446,6 +494,15 @@ function ErrorNotice({ info, compact = false }: { info: ErrorInfo; compact?: boo
         {label}
       </div>
       <div className="text-sm text-neutral-300 leading-relaxed">{info.summary}</div>
+      {onRetry && (
+        <button
+          onClick={onRetry}
+          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-black border border-neutral-700/60 text-neutral-300 text-xs font-bold uppercase tracking-wider hover:border-neutral-500 hover:text-neutral-100 active:scale-[0.98] transition-all font-mono"
+        >
+          <ArrowClockwise size={13} />
+          Retry
+        </button>
+      )}
       {info.kind === "partial_success" && (
         <div className="space-y-1.5 text-xs font-mono">
           <div className="text-neutral-400">
@@ -988,34 +1045,10 @@ export default function Home() {
     );
   }, []);
 
-  const send = async () => {
-    const text = input.trim();
-    // Defense in depth — the composer is already disabled while an action
-    // is pending, but guard the function itself too in case of a race
-    // (e.g. Enter fired a beat before the disabled state re-rendered).
-    if (!text || streaming || pendingActions.length > 0) return;
-
-    const userMsg: ChatMessage = {
-      id: crypto.randomUUID(),
-      role: "user",
-      content: text,
-    };
-
-    setMessages((prev) => [...prev, userMsg]);
-    setInput("");
-    setStreaming(true);
-    setStatusText("");
-
-    const assistantId = crypto.randomUUID();
-    const assistantMsg: ChatMessage = {
-      id: assistantId,
-      role: "assistant",
-      content: "",
-    };
-
-    setMessages((prev) => [...prev, assistantMsg]);
-    setStreamingId(assistantId);
-
+  // The streaming half of a turn, shared by send() (a fresh message) and
+  // retryTurn() (re-running a failed one). `history` is everything BEFORE
+  // this turn: the server appends `text` itself.
+  const streamTurn = async (text: string, history: ChatMessage[], assistantId: string) => {
     // Scoped to this single turn — updated synchronously as plan_step events
     // arrive over the stream, since we're reading it in one sequential loop.
     // Read from here (not React state) when a halt needs to carry the plan
@@ -1030,7 +1063,7 @@ export default function Home() {
         body: JSON.stringify({
           message: text,
           conversation_id: CONVERSATION_ID,
-          conversation_history: historyRef.current.map((m) => ({
+          conversation_history: history.map((m) => ({
             role: m.role === "system" ? "assistant" : m.role,
             content: m.content,
           })),
@@ -1124,6 +1157,13 @@ export default function Home() {
               }
             } else if (event.type === "done") {
               setStatusText("");
+              if (event.retrySafe === true) {
+                setMessages((prev) =>
+                  prev.map((m) =>
+                    m.id === assistantId ? { ...m, retrySafe: true } : m
+                  )
+                );
+              }
             } else if (event.type === "error") {
               setMessages((prev) =>
                 prev.map((m) =>
@@ -1159,6 +1199,67 @@ export default function Home() {
       inputRef.current?.focus();
     }
   };
+
+  const send = async () => {
+    const text = input.trim();
+    // Defense in depth — the composer is already disabled while an action
+    // is pending, but guard the function itself too in case of a race
+    // (e.g. Enter fired a beat before the disabled state re-rendered).
+    if (!text || streaming || pendingActions.length > 0) return;
+
+    const userMsg: ChatMessage = {
+      id: crypto.randomUUID(),
+      role: "user",
+      content: text,
+    };
+    const assistantId = crypto.randomUUID();
+    const assistantMsg: ChatMessage = {
+      id: assistantId,
+      role: "assistant",
+      content: "",
+    };
+
+    // Snapshot history BEFORE this turn's messages are added.
+    const history = historyRef.current;
+
+    setMessages((prev) => [...prev, userMsg, assistantMsg]);
+    setInput("");
+    setStreaming(true);
+    setStatusText("");
+    setStreamingId(assistantId);
+
+    await streamTurn(text, history, assistantId);
+  };
+
+  // Re-runs the turn behind the last message. Keeps the user's bubble (no
+  // duplicate), swaps the failed reply for a fresh one, and leaves whatever
+  // is in the composer alone. Only ever offered when the server marked the
+  // turn retry-safe, and only on the latest message.
+  const retryTurn = async () => {
+    if (streaming || pendingActions.length > 0) return;
+
+    const plan = planRetry(messages);
+    if (!plan) return;
+
+    const assistantId = crypto.randomUUID();
+    const assistantMsg: ChatMessage = {
+      id: assistantId,
+      role: "assistant",
+      content: "",
+    };
+
+    setMessages([...plan.kept, assistantMsg]);
+    setStreaming(true);
+    setStatusText("");
+    setStreamingId(assistantId);
+
+    await streamTurn(plan.text, plan.history, assistantId);
+  };
+
+  // Retry is only offered on the latest message, while nothing is streaming
+  // or awaiting approval.
+  const canRetryNow = (id: string) =>
+    !streaming && pendingActions.length === 0 && messages[messages.length - 1]?.id === id;
 
   const handleKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === "Enter" && !e.shiftKey) {
@@ -1340,10 +1441,25 @@ export default function Home() {
                     {msg.role !== "user" &&
                       msg.notices &&
                       msg.notices.map((notice, i) => (
-                        <ErrorNotice key={i} info={notice} compact />
+                        <ErrorNotice
+                          key={i}
+                          info={notice}
+                          compact
+                          onRetry={
+                            i === msg.notices!.length - 1 &&
+                              msg.retrySafe &&
+                              canRetryNow(msg.id) &&
+                              turnIsRetryable(msg.notices!)
+                              ? retryTurn
+                              : undefined
+                          }
+                        />
                       ))}
                     {msg.errorInfo ? (
-                      <ErrorNotice info={msg.errorInfo} />
+                      <ErrorNotice
+                        info={msg.errorInfo}
+                        onRetry={canRetryNow(msg.id) && isRetryable(msg.errorInfo) ? retryTurn : undefined}
+                      />
                     ) : msg.content ? (
                       msg.role === "user" ? (
                         msg.content

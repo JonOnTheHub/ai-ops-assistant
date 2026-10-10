@@ -5,7 +5,7 @@ import { randomUUID } from "crypto";
 import { runPlanner, PlannerStep } from "@/lib/agent/planner";
 import { executeTool } from "@/lib/agent/executor";
 import { manageShortTermMemory } from "@/lib/agent/memory";
-import { classifyThrown } from "@/lib/agent/classifier";
+import { classifyThrown, anySideEffects } from "@/lib/agent/classifier";
 import { writeTrace } from "@/lib/tracing";
 import { Message, AgentRequest } from "@/types";
 
@@ -316,7 +316,14 @@ ${toolContext}`;
                 const fullTrace = await fetchFullTrace(trace_id);
                 send({ type: "trace_batch", trace_id, userMessage: message, steps: fullTrace });
 
-                send({ type: "done", trace_id });
+                // retrySafe: re-running this whole turn cannot duplicate a side
+                // effect (no log-and-run or needs-approval tool already ran).
+                // The client only offers a Retry button when this is true.
+                send({
+                    type: "done",
+                    trace_id,
+                    retrySafe: !anySideEffects(completedSteps.map((step) => step.toolName)),
+                });
                 closeStream();
             } catch (err) {
                 console.error("[chat] stream error:", err);
