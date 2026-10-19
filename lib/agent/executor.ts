@@ -9,6 +9,7 @@ import { sendEmail } from "@/lib/tools/sendEmail";
 import { resolveAudience } from "@/lib/tools/resolveAudience";
 import { sendBroadcast } from "@/lib/tools/sendBroadcast";
 import { validateToolResult } from "./validator";
+import { cleanDraftArgs } from "./draftText";
 import { classifyToolResult } from "./classifier";
 import { ToolName, ToolResult, BroadcastRecipient } from "@/types";
 import { ErrorInfo } from "@/types/errors";
@@ -57,6 +58,10 @@ export async function executeTool(
   });
 
   if (tier === "needs-approval") {
+        // Email drafts go out as plain text: strip any markdown BEFORE the approval
+    // card exists, so what is approved is exactly what is sent. (The
+    // permission_check trace above still records the raw proposal.)
+    args = cleanDraftArgs(toolName, args);
     const { data: pending, error } = await supabase
       .from("pending_actions")
       .insert({

@@ -80,10 +80,22 @@ export async function POST(req: NextRequest) {
 
             try {
                 // Step 1 — manage short-term memory window
-                const history = await manageShortTermMemory(
+                                const memory = await manageShortTermMemory(
                     conversation_id,
                     conversation_history
                 );
+                const history = memory.history;
+
+                // Tell the client when a NEW summary was just written, so it can show
+                // the "earlier conversation summarized" banner with a peek. Not sent on
+                // turns that only reuse the existing summary.
+                if (memory.compression?.newlyCompressed) {
+                    send({
+                        type: "memory_compressed",
+                        summary: memory.compression.summary,
+                        turnsCovered: memory.compression.turnsCovered,
+                    });
+                }
 
                 // Step 2 — bounded tool-call loop. Each iteration: plan, then
                 // (if a tool was picked) execute it and feed the real result

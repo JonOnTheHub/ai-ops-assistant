@@ -17,6 +17,7 @@ import {
   Wrench,
   ChatCircleDots,
   CaretDown,
+  Stack,
   ListMagnifyingGlass,
   Info,
   Warning,
@@ -101,6 +102,12 @@ interface StepConfigEntry {
 type ApprovalStatus = "idle" | "approving" | "rejecting" | "done";
 
 type ResolveOutcome = "approved" | "rejected" | "failed" | "partial";
+
+// What the server just wrote when it summarized the earlier conversation.
+interface MemoryNote {
+  summary: string;
+  turnsCovered: number;
+}
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -544,6 +551,52 @@ function ErrorNotice({
               </div>
             ))}
           </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── Memory banner ────────────────────────────────────────────────────────────
+// Shown when the server writes a NEW summary of the earlier conversation.
+// Collapsed by default; "Peek" shows exactly what the assistant now remembers
+// of the older messages. No hazard stripe: that stays reserved for approvals.
+
+function MemoryBanner({ note, onDismiss }: { note: MemoryNote; onDismiss: () => void }) {
+  const [open, setOpen] = useState(false);
+
+  return (
+    <div className="shrink-0 border-b border-neutral-800/60 bg-neutral-950">
+      <div className="flex items-center gap-2 px-4 py-2 text-[11px] font-mono text-neutral-400">
+        <Stack size={13} className="shrink-0 text-neutral-500" />
+        <span className="uppercase tracking-wider">Earlier conversation summarized</span>
+        <span className="hidden sm:inline text-neutral-600">· {note.turnsCovered} messages</span>
+        <button
+          onClick={() => setOpen((prev) => !prev)}
+          aria-expanded={open}
+          className="ml-auto flex items-center gap-1 uppercase tracking-wider text-neutral-300 hover:text-neutral-100 transition-colors"
+        >
+          Peek
+          <CaretDown size={11} className={`transition-transform ${open ? "rotate-180" : ""}`} />
+        </button>
+        <button
+          onClick={onDismiss}
+          aria-label="Dismiss"
+          className="text-neutral-600 hover:text-neutral-300 transition-colors"
+        >
+          <X size={12} />
+        </button>
+      </div>
+      {open && (
+        <div className="px-4 pb-3 space-y-2">
+          <div className="max-h-48 overflow-y-auto rounded-lg border border-neutral-800/60 bg-black p-3 text-xs text-neutral-300 leading-relaxed">
+            <div className="prose-chat">
+              <ReactMarkdown>{note.summary}</ReactMarkdown>
+            </div>
+          </div>
+          <p className="text-[10px] text-neutral-600 font-mono leading-relaxed">
+            This is what the assistant remembers of the first {note.turnsCovered} messages. Everything after that is kept word for word.
+          </p>
         </div>
       )}
     </div>
@@ -1042,6 +1095,10 @@ export default function Home() {
   const [input, setInput] = useState("");
   const [streaming, setStreaming] = useState(false);
   const [retryingSend, setRetryingSend] = useState(false);
+  // Set when the server writes a new summary of the earlier conversation.
+  const [memoryNote, setMemoryNote] = useState<MemoryNote | null>(null);
+  // Dismissing hides the banner until the next summary is written.
+  const [memoryDismissed, setMemoryDismissed] = useState(false);
   const [statusText, setStatusText] = useState("");
   const [showKB, setShowKB] = useState(false);
   const [streamingId, setStreamingId] = useState<string | null>(null);
@@ -1169,6 +1226,12 @@ export default function Home() {
                   steps: event.steps,
                 },
               ]);
+            } else if (event.type === "memory_compressed") {
+              // The server just folded older messages into a new summary.
+              if (typeof event.summary === "string" && typeof event.turnsCovered === "number") {
+                setMemoryNote({ summary: event.summary, turnsCovered: event.turnsCovered });
+                setMemoryDismissed(false);
+              }
             } else if (event.type === "tool_error") {
               // A tool step returned something the classifier flagged. Never
               // halts the turn; shown as a strip above the model's reply.
@@ -1456,6 +1519,11 @@ export default function Home() {
           <AnimatePresence>
             {showKB && <KnowledgePanel onClose={() => setShowKB(false)} />}
           </AnimatePresence>
+
+          {/* Memory banner */}
+          {memoryNote && !memoryDismissed && (
+            <MemoryBanner note={memoryNote} onDismiss={() => setMemoryDismissed(true)} />
+          )}
 
           {/* Messages */}
           <div className="flex-1 min-h-0 overflow-y-auto px-4 py-6 space-y-6">
