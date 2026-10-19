@@ -62,6 +62,9 @@ interface ChatMessage {
   // Server-set on the done event: no side-effecting tool ran this turn, so
   // re-running it cannot duplicate anything. Gates the Retry button.
   retrySafe?: boolean;
+  // Set on the bubble an approval resolved into when it carries errorInfo:
+  // the approved action's id, so a broadcast Retry can point the server at it.
+  sourceActionId?: string;
 }
 
 interface PendingAction {
@@ -436,6 +439,23 @@ function turnIsRetryable(notices: ErrorInfo[]): boolean {
   return notices.some(isRetryable) && notices.every((n) => n.kind !== "tool_failure" || n.retryable);
 }
 
+// Which recovery a bubble offers. Broadcast failures recover through a fresh
+// approval (never a silent re-run); everything else is a chat-turn retry.
+type Recovery = { kind: "turn" } | { kind: "broadcast"; label: string } | null;
+
+function recoveryFor(info: ErrorInfo, hasSourceAction: boolean): Recovery {
+  const isBroadcast = info.kind === "partial_success" || (info.kind === "tool_failure" && info.toolName === "sendBroadcast");
+  // A bubble that came from an APPROVAL (it has a source action) must never
+  // get a chat-turn retry: that would re-run the whole original message,
+  // including steps like createTask that already ran before the approval.
+  if (hasSourceAction) {
+    if (!isBroadcast) return null;
+    return { kind: "broadcast", label: info.kind === "partial_success" ? `Retry failed (${info.failed.length})` : "Retry for approval" };
+  }
+  if (isRetryable(info)) return { kind: "turn" };
+  return null;
+}
+
 // Works out how to re-run the turn behind the LAST message. That message must
 // be an assistant reply sitting directly after the user message it answers.
 // `history` is everything before that user message (the server appends the
@@ -457,10 +477,12 @@ function ErrorNotice({
   info,
   compact = false,
   onRetry,
+  retryLabel,
 }: {
   info: ErrorInfo;
   compact?: boolean;
   onRetry?: () => void;
+  retryLabel?: string;
 }) {
   const tone = ERROR_TONE[info.kind];
   const Icon = tone.Icon;
@@ -500,7 +522,7 @@ function ErrorNotice({
           className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-black border border-neutral-700/60 text-neutral-300 text-xs font-bold uppercase tracking-wider hover:border-neutral-500 hover:text-neutral-100 active:scale-[0.98] transition-all font-mono"
         >
           <ArrowClockwise size={13} />
-          Retry
+          {retryLabel ?? "Retry"}
         </button>
       )}
       {info.kind === "partial_success" && (
@@ -1019,6 +1041,7 @@ export default function Home() {
   const [pendingActions, setPendingActions] = useState<PendingAction[]>([]);
   const [input, setInput] = useState("");
   const [streaming, setStreaming] = useState(false);
+  const [retryingSend, setRetryingSend] = useState(false);
   const [statusText, setStatusText] = useState("");
   const [showKB, setShowKB] = useState(false);
   const [streamingId, setStreamingId] = useState<string | null>(null);
@@ -1104,9 +1127,12 @@ export default function Home() {
                   ? [...currentPlanSteps, updated]
                   : currentPlanSteps.map((s, i) => (i === idx ? updated : s));
 
+              // Snapshot for the updater below. It runs later, and must see THIS
+              // event's steps, not whatever the variable holds by then.
+              const stepsNow = currentPlanSteps;
               setMessages((prev) =>
                 prev.map((m) =>
-                  m.id === assistantId ? { ...m, planSteps: currentPlanSteps } : m
+                  m.id === assistantId ? { ...m, planSteps: stepsNow } : m
                 )
               );
             } else if (event.type === "kb_context") {
@@ -1122,6 +1148,7 @@ export default function Home() {
               setMessages((prev) =>
                 prev.filter((m) => m.id !== assistantId)
               );
+              const stepsAtHalt = currentPlanSteps;
               setPendingActions((prev) => [
                 ...prev,
                 {
@@ -1129,7 +1156,7 @@ export default function Home() {
                   toolName: event.toolName,
                   args: event.args,
                   message: event.message,
-                  planSteps: currentPlanSteps,
+                  planSteps: stepsAtHalt,
                 },
               ]);
               setStatusText("");
@@ -1256,10 +1283,75 @@ export default function Home() {
     await streamTurn(plan.text, plan.history, assistantId);
   };
 
+  // Broadcast recovery. Asks the server to set up a FRESH needs-approval action
+  // for the recipients whose send failed (the server works out who, from its
+  // own record, and never from anything sent here). Nothing is sent by this
+  // call: the new approval card appears like any other pending action.
+  const retryFailedSend = async (sourceActionId: string) => {
+    if (streaming || pendingActions.length > 0 || retryingSend) return;
+    setRetryingSend(true);
+
+    const report = (summary: string) =>
+      setMessages((prev) => [
+        ...prev,
+        {
+          id: crypto.randomUUID(),
+          role: "assistant",
+          content: summary,
+          errorInfo: { kind: "tool_failure", source: "system", retryable: false, summary },
+        },
+      ]);
+
+    try {
+      const res = await fetch(`/api/actions/${sourceActionId}/retry`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: "{}",
+      });
+      const isJson = (res.headers.get("content-type") ?? "").includes("application/json");
+
+      if (!isJson) {
+        report(`The retry endpoint didn't respond properly (HTTP ${res.status}), so nothing was set up and no message was sent.`);
+        return;
+      }
+
+      const data = await res.json();
+      if (!res.ok) {
+        report(data.error ?? "I couldn't set up the retry.");
+        return;
+      }
+
+      setPendingActions((prev) => [
+        ...prev,
+        {
+          id: data.pendingActionId,
+          toolName: data.toolName,
+          args: data.args,
+          message: data.message,
+        },
+      ]);
+    } catch {
+      report("I couldn't confirm the retry was set up. Check for a new approval card before trying again.");
+    } finally {
+      setRetryingSend(false);
+    }
+  };
+
   // Retry is only offered on the latest message, while nothing is streaming
   // or awaiting approval.
   const canRetryNow = (id: string) =>
     !streaming && pendingActions.length === 0 && messages[messages.length - 1]?.id === id;
+
+  // What button (if any) an error bubble gets right now.
+  const retryFor = (msg: ChatMessage): { onRetry?: () => void; label?: string } => {
+    if (!msg.errorInfo || !canRetryNow(msg.id)) return {};
+    const recovery = recoveryFor(msg.errorInfo, Boolean(msg.sourceActionId));
+    if (!recovery) return {};
+    if (recovery.kind === "turn") return { onRetry: retryTurn };
+    const sourceId = msg.sourceActionId;
+    if (!sourceId) return {};
+    return { onRetry: () => retryFailedSend(sourceId), label: recovery.label };
+  };
 
   const handleKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === "Enter" && !e.shiftKey) {
@@ -1299,7 +1391,7 @@ export default function Home() {
           id: crypto.randomUUID(),
           role: "assistant",
           content,
-          ...(errorInfo ? { errorInfo } : {}),
+          ...(errorInfo ? { errorInfo, sourceActionId: id } : {}),
         },
       ]);
     }
@@ -1458,7 +1550,8 @@ export default function Home() {
                     {msg.errorInfo ? (
                       <ErrorNotice
                         info={msg.errorInfo}
-                        onRetry={canRetryNow(msg.id) && isRetryable(msg.errorInfo) ? retryTurn : undefined}
+                        onRetry={retryFor(msg).onRetry}
+                        retryLabel={retryFor(msg).label}
                       />
                     ) : msg.content ? (
                       msg.role === "user" ? (
