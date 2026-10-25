@@ -5,19 +5,19 @@ import { ToolResult } from "@/types";
 // Candidate fetch, per leg — deliberately tight. This is a candidate pool
 // for fusion, not a final answer set; there's no reason to pull more rows
 // (or more content) than fusion actually needs to reason about.
-const CANDIDATES_PER_LEG = 10;
+export const CANDIDATES_PER_LEG = 10;
 
 // Final result count returned to the model/UI after fusion.
-const FINAL_COUNT = 5;
+export const FINAL_COUNT = 5;
 
 // Standard RRF constant — dampens the impact of exact rank position so a
 // #1-vs-#2 difference doesn't swing the fused score wildly.
-const RRF_K = 60;
+export const RRF_K = 60;
 
 // A lead this much bigger than the runner-up counts as "clearly ahead,"
 // not just "technically ahead." Starting heuristic — needs validating
 // against real hybrid-search data, not a derived constant.
-const MARGIN_MULTIPLIER = 1.3;
+export const MARGIN_MULTIPLIER = 1.3;
 
 // "Both legs agree" only counts as strong evidence when at least one leg's
 // own raw score is at least this fraction of THAT LEG'S own #1 score — not
@@ -30,7 +30,7 @@ const MARGIN_MULTIPLIER = 1.3;
 // tilapia-sourcing question) through just because nothing else in that
 // leg's weak field matched much either. Score-ratio, not rank, is the
 // real signal.
-const SCORE_RATIO_THRESHOLD = 0.5;
+export const SCORE_RATIO_THRESHOLD = 0.5;
 
 // Terms that carry zero discriminating signal in THIS corpus specifically
 // — nearly every document opens with a "Solmara Studio ..." framing
@@ -42,10 +42,12 @@ const SCORE_RATIO_THRESHOLD = 0.5;
 // of the query itself.
 const KB_STOPWORDS = ["solmara", "studio"];
 
-function stripKbStopwords(query: string): string {
+export function stripKbStopwords(query: string): string {
     const words = query.split(/\s+/);
     const filtered = words.filter((w) => {
-        const bare = w.toLowerCase().replace(/[^a-z0-9]/gi, "");
+        // "studio's" and "Solmara’s" are the same boilerplate word with a possessive
+        // on the end; dropping the apostrophe alone would leave "studios".
+        const bare = w.toLowerCase().replace(/['’]s$/, "").replace(/[^a-z0-9]/gi, "");
         return !KB_STOPWORDS.includes(bare);
     });
     // Never search on nothing — if stripping would leave the query empty
@@ -54,7 +56,7 @@ function stripKbStopwords(query: string): string {
     return filtered.length > 0 ? filtered.join(" ") : query;
 }
 
-interface CandidateRank {
+export interface CandidateRank {
     id: string;
     vectorRank: number | null;
     vectorScore: number | null;
@@ -66,7 +68,7 @@ function rrfScore(rank: number | null): number {
     return rank === null ? 0 : 1 / (RRF_K + rank);
 }
 
-function fuse(
+export function fuse(
     vectorRows: { id: string; similarity: number }[],
     fulltextRows: { id: string; rank: number }[]
 ): CandidateRank[] {
@@ -122,7 +124,7 @@ function fuse(
 // both-legs-agree shortcut is structurally impossible — nothing can be
 // found by both legs when only one ran — so this always falls through to
 // the margin check in that case, never a false "confident."
-function confidenceForIndex(
+export function confidenceForIndex(
     ranked: CandidateRank[],
     index: number,
     vectorTopScore: number,
@@ -168,16 +170,39 @@ function confidenceForIndex(
     return itemScore >= nextScore * MARGIN_MULTIPLIER ? "confident" : "weak";
 }
 
-export async function searchKnowledgeBase(args: {
-    query: string;
-}): Promise<ToolResult> {
+export interface CandidatePool {
+    // What both legs actually searched on, after stopword stripping.
+    searchQuery: string;
+    vectorRows: { id: string; similarity: number }[];
+    fulltextRows: { id: string; rank: number }[];
+    ranked: CandidateRank[];
+    // Each leg's own #1 score, used as the denominator for the strength
+    // ratio above: deliberately each leg's own top, never compared across
+    // legs (vector's cosine similarity and full-text's ts_rank live on
+    // completely different, incomparable scales).
+    vectorTopScore: number;
+    fulltextTopScore: number;
+    vectorFailed: boolean;
+    fulltextFailed: boolean;
+    vectorError: unknown;
+    fulltextError: unknown;
+}
+
+// The ONE place both retrieval legs are run. searchKnowledgeBase, the debug
+// script and the calibration script all go through here, so a diagnostic can
+// never again disagree with production: the stopword stripper used to exist
+// in the debug script and in this file, but only the debug script called it,
+// so it reported healthy retrieval while chat searched on the raw query.
+export async function fetchCandidates(query: string): Promise<CandidatePool> {
+    const searchQuery = stripKbStopwords(query);
+
     // Vector and full-text legs run independently and degrade
-    // independently — one failing (e.g. Voyage's embedding API down,
-    // which has genuinely happened before) doesn't kill search entirely,
-    // it just runs on whichever leg is still up.
+    // independently: one failing (e.g. Voyage's embedding API down, which
+    // has genuinely happened before) doesn't kill search entirely, it just
+    // runs on whichever leg is still up.
     const [vectorResult, fulltextResult] = await Promise.allSettled([
         (async () => {
-            const embedding = await embed(args.query);
+            const embedding = await embed(searchQuery);
             const { data, error } = await supabase.rpc("match_kb_documents_ids", {
                 query_embedding: embedding,
                 match_count: CANDIDATES_PER_LEG,
@@ -189,7 +214,7 @@ export async function searchKnowledgeBase(args: {
             const { data, error } = await supabase.rpc(
                 "match_kb_documents_fulltext_ids",
                 {
-                    query_text: args.query,
+                    query_text: searchQuery,
                     match_count: CANDIDATES_PER_LEG,
                 }
             );
@@ -198,24 +223,43 @@ export async function searchKnowledgeBase(args: {
         })(),
     ]);
 
-    if (vectorResult.status === "rejected") {
-        console.warn("[searchKnowledgeBase] vector leg failed, degrading to full-text only:", vectorResult.reason);
-    }
-    if (fulltextResult.status === "rejected") {
-        console.warn("[searchKnowledgeBase] full-text leg failed, degrading to vector only:", fulltextResult.reason);
-    }
-
-    if (vectorResult.status === "rejected" && fulltextResult.status === "rejected") {
-        return {
-            success: false,
-            error: `searchKnowledgeBase failed: both retrieval methods unavailable (vector: ${vectorResult.reason}; full-text: ${fulltextResult.reason})`,
-        };
-    }
-
     const vectorRows = vectorResult.status === "fulfilled" ? vectorResult.value : [];
     const fulltextRows = fulltextResult.status === "fulfilled" ? fulltextResult.value : [];
 
-    const ranked = fuse(vectorRows, fulltextRows);
+    return {
+        searchQuery,
+        vectorRows,
+        fulltextRows,
+        ranked: fuse(vectorRows, fulltextRows),
+        vectorTopScore: vectorRows[0]?.similarity ?? 0,
+        fulltextTopScore: fulltextRows[0]?.rank ?? 0,
+        vectorFailed: vectorResult.status === "rejected",
+        fulltextFailed: fulltextResult.status === "rejected",
+        vectorError: vectorResult.status === "rejected" ? vectorResult.reason : null,
+        fulltextError: fulltextResult.status === "rejected" ? fulltextResult.reason : null,
+    };
+}
+
+export async function searchKnowledgeBase(args: {
+    query: string;
+}): Promise<ToolResult> {
+    const pool = await fetchCandidates(args.query);
+
+    if (pool.vectorFailed) {
+        console.warn("[searchKnowledgeBase] vector leg failed, degrading to full-text only:", pool.vectorError);
+    }
+    if (pool.fulltextFailed) {
+        console.warn("[searchKnowledgeBase] full-text leg failed, degrading to vector only:", pool.fulltextError);
+    }
+
+    if (pool.vectorFailed && pool.fulltextFailed) {
+        return {
+            success: false,
+            error: `searchKnowledgeBase failed: both retrieval methods unavailable (vector: ${pool.vectorError}; full-text: ${pool.fulltextError})`,
+        };
+    }
+
+    const { ranked, vectorTopScore, fulltextTopScore } = pool;
 
     if (ranked.length === 0) {
         return {
@@ -226,13 +270,6 @@ export async function searchKnowledgeBase(args: {
             },
         };
     }
-
-    // Each leg's own #1 score, used as the denominator for the strength
-    // ratio above — deliberately each leg's own top, not compared across
-    // legs (vector's cosine similarity and full-text's ts_rank live on
-    // completely different, incomparable scales).
-    const vectorTopScore = vectorRows[0]?.similarity ?? 0;
-    const fulltextTopScore = fulltextRows[0]?.rank ?? 0;
 
     const winners = ranked.slice(0, FINAL_COUNT);
     const winnerIds = winners.map((w) => w.id);
