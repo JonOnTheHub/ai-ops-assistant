@@ -4,7 +4,8 @@ import { ToolResult, BroadcastRecipient } from "@/types";
 const resend = new Resend(process.env.RESEND_API_KEY!);
 
 const FROM_EMAIL = process.env.RESEND_FROM_EMAIL ?? "onboarding@resend.dev";
-const SANDBOX_MODE = process.env.EMAIL_SANDBOX_MODE === "true";
+// Read per call, not at import, so the mode is whatever the environment says now.
+const isSandbox = () => process.env.EMAIL_SANDBOX_MODE === "true";
 
 interface RecipientResult {
     name: string;
@@ -26,16 +27,17 @@ export async function sendBroadcast(args: {
             };
         }
 
+        const sandbox = isSandbox();
         const results: RecipientResult[] = [];
 
         for (const recipient of args.recipients) {
-            const to = SANDBOX_MODE ? process.env.RESEND_DEV_EMAIL! : recipient.email;
+            const to = sandbox ? process.env.RESEND_DEV_EMAIL! : recipient.email;
 
             try {
                 const { error } = await resend.emails.send({
                     from: FROM_EMAIL,
                     to,
-                    subject: SANDBOX_MODE
+                    subject: sandbox
                         ? `[SANDBOX → ${recipient.email}] ${args.subject}`
                         : args.subject,
                     text: args.body,
@@ -68,6 +70,10 @@ export async function sendBroadcast(args: {
             message += ` — ${failedCount} failed (${failedNames.join(", ")})`;
         }
         message += ".";
+        // Say where they REALLY went: in sandbox mode every send is rerouted.
+        if (sandbox) {
+            message += " Sandbox mode: every message was delivered to the dev inbox, not to these recipients.";
+        }
 
         return {
             success: true,
@@ -76,6 +82,7 @@ export async function sendBroadcast(args: {
                 sent_count: sentCount,
                 failed_count: failedCount,
                 total: results.length,
+                sandbox,
                 message,
             },
         };

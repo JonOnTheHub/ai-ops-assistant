@@ -4,7 +4,8 @@ import { ToolResult } from "@/types";
 const resend = new Resend(process.env.RESEND_API_KEY!);
 
 const FROM_EMAIL = process.env.RESEND_FROM_EMAIL ?? "onboarding@resend.dev";
-const SANDBOX_MODE = process.env.EMAIL_SANDBOX_MODE === "true";
+// Read per call, not at import, so the mode is whatever the environment says now.
+const isSandbox = () => process.env.EMAIL_SANDBOX_MODE === "true";
 
 export async function sendEmail(args: {
   to: string;
@@ -12,12 +13,13 @@ export async function sendEmail(args: {
   body: string;
 }): Promise<ToolResult> {
   try {
-    const to = SANDBOX_MODE ? process.env.RESEND_DEV_EMAIL! : args.to;
+    const sandbox = isSandbox();
+    const to = sandbox ? process.env.RESEND_DEV_EMAIL! : args.to;
 
     const { data, error } = await resend.emails.send({
       from: FROM_EMAIL,
       to,
-      subject: SANDBOX_MODE ? `[SANDBOX → ${args.to}] ${args.subject}` : args.subject,
+      subject: sandbox ? `[SANDBOX → ${args.to}] ${args.subject}` : args.subject,
       text: args.body,
     });
 
@@ -28,8 +30,14 @@ export async function sendEmail(args: {
       data: {
         email_id: data?.id,
         to: args.to,
+        delivered_to: to,
+        sandbox,
         subject: args.subject,
-        message: `Email sent to ${args.to}.`,
+        // Say where it REALLY went. In sandbox mode every send is rerouted, and
+        // "Email sent to <the address>" would be a false report.
+        message: sandbox
+          ? `Sandbox mode: this email was addressed to ${args.to} but delivered to the dev inbox instead.`
+          : `Email sent to ${args.to}.`,
       },
     };
   } catch (err) {
