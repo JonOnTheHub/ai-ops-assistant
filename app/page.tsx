@@ -25,6 +25,7 @@ import {
   X
 } from "@phosphor-icons/react";
 import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 import type { ErrorInfo, ErrorKind } from "@/types/errors";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -591,7 +592,7 @@ function MemoryBanner({ note, onDismiss }: { note: MemoryNote; onDismiss: () => 
         <div className="px-4 pb-3 space-y-2">
           <div className="max-h-48 overflow-y-auto rounded-lg border border-neutral-800/60 bg-black p-3 text-xs text-neutral-300 leading-relaxed">
             <div className="prose-chat">
-              <ReactMarkdown>{note.summary}</ReactMarkdown>
+              <ReactMarkdown remarkPlugins={[remarkGfm]}>{note.summary}</ReactMarkdown>
             </div>
           </div>
           <p className="text-[10px] text-neutral-600 font-mono leading-relaxed">
@@ -1626,7 +1627,7 @@ export default function Home() {
                         msg.content
                       ) : (
                         <div className="prose-chat">
-                          <ReactMarkdown>{msg.content}</ReactMarkdown>
+                          <ReactMarkdown remarkPlugins={[remarkGfm]}>{msg.content}</ReactMarkdown>
                         </div>
                       )
                     ) : streamingId === msg.id ? (

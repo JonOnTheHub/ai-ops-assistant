@@ -71,6 +71,38 @@ body {
   color: #facc15;
 }
 
+.prose-chat table {
+  display: block;
+  max-width: 100%;
+  overflow-x: auto;
+  margin: 0.5rem 0;
+  border-collapse: collapse;
+  font-size: 0.8rem;
+}
+
+.prose-chat th,
+.prose-chat td {
+  border: 1px solid #262626;
+  padding: 0.35rem 0.6rem;
+  text-align: left;
+  vertical-align: top;
+}
+
+.prose-chat th {
+  background: #0a0a0a;
+  color: #e5e5e5;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.prose-chat tr:nth-child(even) td {
+  background: #050505;
+}
+
+.prose-chat del {
+  color: #737373;
+}
+
 .glow-yellow {
   box-shadow: 0 0 24px rgba(250, 204, 21, 0.12);
 }
