@@ -18,6 +18,11 @@ const EXPECTED_FIELDS: Partial<Record<ToolName, string[]>> = {
 // a validator-originated failure by prefix instead of duplicating this string.
 export const VALIDATOR_ERROR_PREFIX = "[validator]";
 
+// Prefix for a failure that is about the REQUEST, not a tool breaking: an input a
+// tool can't safely act on (for example an email address nobody gave us). The
+// classifier routes these to "misunderstood", not "tool_failure".
+export const INPUT_ERROR_PREFIX = "[input]";
+
 export function validateToolResult(
     toolName: ToolName,
     result: ToolResult

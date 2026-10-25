@@ -1,6 +1,6 @@
 import { APIConnectionError, APIConnectionTimeoutError } from "groq-sdk";
 import { getToolTier } from "@/lib/tools";
-import { VALIDATOR_ERROR_PREFIX } from "./validator";
+import { VALIDATOR_ERROR_PREFIX, INPUT_ERROR_PREFIX } from "./validator";
 import { ToolName, ToolResult } from "@/types";
 import { ErrorInfo, FailedItem, SystemCause, ThrownContext } from "@/types/errors";
 
@@ -57,6 +57,16 @@ function shortReason(raw: string | undefined): string {
 // ── Tool results ──────────────────────────────────────────────
 
 function classifyFailedResult(toolName: ToolName, result: ToolResult): ErrorInfo {
+    // Nothing broke: the request itself couldn't be acted on safely.
+    if (result.error?.startsWith(INPUT_ERROR_PREFIX)) {
+        return {
+            kind: "misunderstood",
+            reason: "invalid_input",
+            toolName,
+            summary: result.error.slice(INPUT_ERROR_PREFIX.length).trim(),
+        };
+    }
+
     if (result.error?.startsWith(VALIDATOR_ERROR_PREFIX)) {
         return {
             kind: "tool_failure",

@@ -8,7 +8,8 @@ import { createLead } from "@/lib/tools/createLead";
 import { sendEmail } from "@/lib/tools/sendEmail";
 import { resolveAudience } from "@/lib/tools/resolveAudience";
 import { sendBroadcast } from "@/lib/tools/sendBroadcast";
-import { validateToolResult } from "./validator";
+import { validateToolResult, INPUT_ERROR_PREFIX } from "./validator";
+import { checkEmailRecipient } from "./recipientCheck";
 import { cleanDraftArgs } from "./draftText";
 import { classifyToolResult } from "./classifier";
 import { ToolName, ToolResult, BroadcastRecipient } from "@/types";
@@ -43,7 +44,10 @@ export type ExecutorResult =
 export async function executeTool(
   toolName: ToolName,
   args: Record<string, unknown>,
-  trace_id: string
+  trace_id: string,
+  // What the person actually typed this conversation (their words only, never the
+  // assistant's), so an address they gave us can be told from one the model made up.
+  userTexts: string[] = []
 ): Promise<ExecutorResult> {
   const tier = getToolTier(toolName);
   const permStart = Date.now();
@@ -62,6 +66,31 @@ export async function executeTool(
     // card exists, so what is approved is exactly what is sent. (The
     // permission_check trace above still records the raw proposal.)
     args = cleanDraftArgs(toolName, args);
+
+    // sendEmail goes to exactly one address and the model invents them (it once
+    // wrote to "catering-team@solmara.com", a domain nobody here controls). Check
+    // BEFORE an approval card exists, so the person is never asked to approve an
+    // address nobody gave us. Returned as a "misunderstood" result, not a crash.
+    if (toolName === "sendEmail") {
+      const check = await checkEmailRecipient(args.to, userTexts);
+      if (!check.ok) {
+        const result: ToolResult = { success: false, error: `${INPUT_ERROR_PREFIX} ${check.reason}` };
+        const errorInfo = classifyToolResult(toolName, result);
+
+        await writeTrace({
+          trace_id,
+          step: "tool_call",
+          tool_name: toolName,
+          input: args,
+          output: { ...(result as unknown as Record<string, unknown>), errorInfo },
+          status: "error",
+          latency_ms: 0,
+        });
+
+        return { type: "result", toolName, result, errorInfo, latency_ms: 0 };
+      }
+    }
+
     const { data: pending, error } = await supabase
       .from("pending_actions")
       .insert({

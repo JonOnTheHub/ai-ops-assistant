@@ -131,5 +131,12 @@ check("anySideEffects: a read then createTask -> true", anySideEffects(["searchK
 check("anySideEffects: createLead -> true", anySideEffects(["createLead"]) === true);
 check("anySideEffects: needs-approval tool -> true", anySideEffects(["sendEmail"]) === true);
 
+// ── [input] failures are about the request, not a tool breaking ──
+const badInput = classifyToolResult("sendEmail", { success: false, error: "[input] I don't have an email address for x@y.com." });
+check("input failure -> misunderstood, not tool_failure", badInput?.kind === "misunderstood", badInput);
+check("input failure -> reason invalid_input, tool recorded", badInput?.kind === "misunderstood" && badInput.reason === "invalid_input" && badInput.toolName === "sendEmail", badInput);
+check("input failure -> summary has the internal prefix stripped", badInput?.summary === "I don't have an email address for x@y.com.", badInput?.summary);
+check("a plain sendEmail failure is still a tool_failure", classifyToolResult("sendEmail", { success: false, error: "sendEmail failed: boom" })?.kind === "tool_failure");
+
 console.log(failures === 0 ? "\nAll checks passed." : `\n${failures} check(s) FAILED.`);
 process.exit(failures === 0 ? 0 : 1);

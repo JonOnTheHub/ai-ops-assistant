@@ -86,6 +86,13 @@ export async function POST(req: NextRequest) {
                 );
                 const history = memory.history;
 
+                // The person's own words this conversation (never the assistant's), so
+                // an email address they typed can be told from one the model invented.
+                const userTexts = [
+                    ...conversation_history.filter((m) => m.role === "user").map((m) => m.content),
+                    message,
+                ];
+
                 // Tell the client when a NEW summary was just written, so it can show
                 // the "earlier conversation summarized" banner with a peek. Not sent on
                 // turns that only reuse the existing summary.
@@ -136,7 +143,8 @@ export async function POST(req: NextRequest) {
                     const execResult = await executeTool(
                         plan.toolName,
                         plan.args,
-                        trace_id
+                        trace_id,
+                        userTexts
                     );
 
                     // needs-approval path — halt, tell user, return early.

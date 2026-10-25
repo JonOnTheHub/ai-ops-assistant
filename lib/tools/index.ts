@@ -99,13 +99,13 @@ export const TOOL_REGISTRY: Record<ToolName, ToolDefinition> = {
         name: "sendEmail",
         tier: "needs-approval",
         description:
-            "Draft and send an email to a customer or lead. IMPORTANT: This tool requires human approval before sending. Always use this when the user wants to send an email.",
+            "Draft and send an email to ONE specific person whose address is known: a customer or lead, or someone the user gave you an address for. IMPORTANT: This tool requires human approval before sending. For a team, department or role (for example the Catering team), use resolveAudience and then sendBroadcast instead. Never invent or guess an email address.",
         parameters: {
             type: "object",
             properties: {
                 to: {
                     type: "string",
-                    description: "Recipient email address",
+                    description: "Recipient email address. Must come from a tool result (getCustomer or resolveAudience) or be typed by the user. Never guess or construct one.",
                 },
                 subject: {
                     type: "string",
