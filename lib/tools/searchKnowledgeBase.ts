@@ -30,7 +30,27 @@ export const MARGIN_MULTIPLIER = 1.3;
 // tilapia-sourcing question) through just because nothing else in that
 // leg's weak field matched much either. Score-ratio, not rank, is the
 // real signal.
-export const SCORE_RATIO_THRESHOLD = 0.5;
+// Dual-leg confidence: a chunk both legs found is "confident" only if its raw
+// vector similarity is within this fraction of the best vector match. Chosen
+// from a 21-query labeled calibration run (scripts/calibrate-confidence.ts):
+// on 101 scored results the old rule (either leg >= 50% of its own #1) called
+// 56 irrelevant results confident, 31% precision. The full-text ratio is left
+// out on purpose: ts_rank scores tie at 100% for many unrelated chunks on short
+// queries, so it inflated "strength". Vector >= 90% and found by both legs
+// reached 95% precision at 84% recall; 80% gives 83% / 96%. Precision wins
+// here: a solid dot on an irrelevant card is a false claim, while a hollow dot
+// on a relevant card only understates.
+export const DUAL_LEG_VECTOR_RATIO = 0.9;
+
+// Absolute floor on the BEST raw vector similarity. Ratios are relative to the
+// pool's own #1, so the top result is always 100% of itself and the ratio rule
+// can never say "nothing here is any good" (the unanswerable query "visa
+// requirements" had its irrelevant #1 labeled confident). Raw scores can:
+// unanswerable queries topped out at 0.337 (on-topic but absent), 0.191 and
+// 0.169 (off-topic), answerable ones at 0.405 or better. Set conservatively
+// below the gap; re-check with scripts/calibrate-confidence.ts, which prints the
+// raw top score for every query.
+export const MIN_VECTOR_TOP_SCORE = 0.35;
 
 // Terms that carry zero discriminating signal in THIS corpus specifically
 // — nearly every document opens with a "Solmara Studio ..." framing
@@ -107,60 +127,42 @@ export function fuse(
     );
 }
 
-// Confidence rule: agreement between both retrieval methods is strong
-// evidence ONLY when at least one leg's raw score is genuinely strong
-// relative to that same leg's own best match (>= 50% of it) — not just
-// "found somewhere in both top-10 lists," and not just "ranked well,"
-// since rank position alone hides a flat, low-signal field. Anything
-// short of that falls through to the margin check instead, same as a
-// single-leg result would.
+// True when the best raw vector match is too weak to trust anything returned.
+// Only judged when the vector leg actually ran: with it down there is no raw
+// similarity to judge, and "no information" must not read as "no match".
+export function isLowConfidence(vectorRowCount: number, vectorTopScore: number): boolean {
+    return vectorRowCount > 0 && vectorTopScore < MIN_VECTOR_TOP_SCORE;
+}
+
+// Per-item confidence label, shown as a dot on every context card.
 //
-// Applied per-item (each result compared to its own immediate neighbor
-// for the margin fallback), not just to the single top result — the
-// existing Context Card UI shows a confidence dot on every card, so every
-// card needs a real answer, not just the first.
+// Found by both legs: confident only if its vector similarity is within
+// DUAL_LEG_VECTOR_RATIO of the best vector match. A dual-leg item that fails
+// is weak, full stop: its fused RRF score always beats every single-leg item
+// (two terms against one), so letting it fall through to the margin check
+// would reward that structural cliff as if it were quality.
 //
-// In degraded single-leg mode (one retrieval method unavailable), the
-// both-legs-agree shortcut is structurally impossible — nothing can be
-// found by both legs when only one ran — so this always falls through to
-// the margin check in that case, never a false "confident."
+// Found by one leg only: confident only with a clear fused-score margin over
+// the next result. That comparison is clean here because it only ever looks
+// within the single-leg cluster. In degraded single-leg mode (one retrieval
+// method down) nothing can be found by both legs, so this never produces a
+// false "confident" from the both-legs branch.
 export function confidenceForIndex(
     ranked: CandidateRank[],
     index: number,
-    vectorTopScore: number,
-    fulltextTopScore: number
+    vectorTopScore: number
 ): "confident" | "weak" {
     const item = ranked[index];
     const foundByBoth = item.vectorRank !== null && item.fulltextRank !== null;
 
-    const strongOnVector =
-        item.vectorScore !== null &&
-        vectorTopScore > 0 &&
-        item.vectorScore >= vectorTopScore * SCORE_RATIO_THRESHOLD;
-
-    const strongOnFulltext =
-        item.fulltextScore !== null &&
-        fulltextTopScore > 0 &&
-        item.fulltextScore >= fulltextTopScore * SCORE_RATIO_THRESHOLD;
-
     if (foundByBoth) {
-        // Already had its shot at strong-agreement confidence above. A
-        // dual-leg match's fused RRF score is structurally guaranteed to
-        // beat every single-leg match (sum of two terms vs one) —
-        // even the weakest possible dual-leg hit outscores the strongest
-        // possible single-leg hit. Letting a dual-leg item that FAILED
-        // the strength test fall through to the margin-vs-next check
-        // would just reward that structural cliff as if it were a real
-        // quality signal — reintroducing "found by both" as an automatic
-        // confidence booster through a different door, exactly what this
-        // rule exists to prevent. Failed strength test, found by both:
-        // weak, full stop.
-        return strongOnVector || strongOnFulltext ? "confident" : "weak";
+        const strongOnVector =
+            item.vectorScore !== null &&
+            vectorTopScore > 0 &&
+            item.vectorScore >= vectorTopScore * DUAL_LEG_VECTOR_RATIO;
+        return strongOnVector ? "confident" : "weak";
     }
 
-    // Single-leg only from here — the margin-vs-next comparison is clean
-    // in this branch, since it's only ever comparing within the
-    // single-leg cluster, not across the dual/single-leg boundary.
     const next = ranked[index + 1];
     if (!next) return "weak";
 
@@ -259,7 +261,8 @@ export async function searchKnowledgeBase(args: {
         };
     }
 
-    const { ranked, vectorTopScore, fulltextTopScore } = pool;
+    const { ranked, vectorTopScore } = pool;
+    const lowConfidence = isLowConfidence(pool.vectorRows.length, vectorTopScore);
 
     if (ranked.length === 0) {
         return {
@@ -300,7 +303,7 @@ export async function searchKnowledgeBase(args: {
                 id: row.id,
                 content: row.content,
                 source: row.source,
-                confidence: confidenceForIndex(winners, i, vectorTopScore, fulltextTopScore),
+                confidence: lowConfidence ? "weak" : confidenceForIndex(winners, i, vectorTopScore),
                 foundBy:
                     w.vectorRank !== null && w.fulltextRank !== null
                         ? "both"
@@ -313,6 +316,16 @@ export async function searchKnowledgeBase(args: {
 
     return {
         success: true,
-        data: { results },
+        data: {
+            results,
+            // The model reads this. Without it, five solid-looking cards for a
+            // question the KB doesn't cover invite an answer built from nothing.
+            ...(lowConfidence
+                ? {
+                    lowConfidence: true,
+                    note: `The closest matches are weak: the best similarity is ${vectorTopScore.toFixed(2)}, under the ${MIN_VECTOR_TOP_SCORE} floor. They probably don't answer the question. Use one only if it clearly does; otherwise say the knowledge base doesn't appear to cover it.`,
+                }
+                : {}),
+        },
     };
 }

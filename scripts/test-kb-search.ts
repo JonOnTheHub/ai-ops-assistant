@@ -31,6 +31,9 @@ const seen = {
     fulltextQueries: [] as string[],
 };
 
+// What the stubbed vector leg returns, so each case can set the raw similarities.
+const config = { vectorScores: [0.56, 0.39, 0.29], vectorDown: false };
+
 function json(status: number, body: unknown): Response {
     return new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
 }
@@ -45,6 +48,10 @@ globalThis.fetch = (async (input: unknown, init?: RequestInit) => {
     const url = new URL(typeof input === "string" ? input : input instanceof URL ? input.href : String((input as { url?: string }).url));
     const method = (init?.method ?? "GET").toUpperCase();
 
+    if (url.hostname.includes("voyageai.com") && config.vectorDown) {
+        return json(500, { message: "embedding service down" });
+    }
+
     if (url.hostname.includes("voyageai.com")) {
         seen.embedInputs.push(String(JSON.parse(String(init?.body)).input));
         return json(200, {
@@ -56,11 +63,7 @@ globalThis.fetch = (async (input: unknown, init?: RequestInit) => {
     }
 
     if (url.pathname.endsWith("/rpc/match_kb_documents_ids")) {
-        return json(200, [
-            { id: "c-retainer", similarity: 0.56 },
-            { id: "c-vendor", similarity: 0.39 },
-            { id: "c-identity", similarity: 0.29 },
-        ]);
+        return json(200, ["c-retainer", "c-vendor", "c-identity"].map((id, i) => ({ id, similarity: config.vectorScores[i] })));
     }
 
     if (url.pathname.endsWith("/rpc/match_kb_documents_fulltext_ids")) {
@@ -130,6 +133,47 @@ async function main() {
     check("results include the right chunk first", results[0]?.source === "retainer-policy.md", results.map((r) => r.source));
     check("results carry a confidence label and where they were found", results.every((r) => (r.confidence === "confident" || r.confidence === "weak") && ["both", "vector", "fulltext"].includes(r.foundBy)), results);
     check("the chunk found by both legs at the top of each is confident", results[0]?.confidence === "confident" && results[0]?.foundBy === "both", results[0]);
+
+
+    // 6. The confidence rule. c-identity is found by BOTH legs but its vector
+    // similarity is only 52% of the best (0.29 vs 0.56). The old rule called
+    // that confident because its full-text score was 67% of the text leg's #1;
+    // the new rule looks at the vector similarity and calls it weak.
+    type Hit = { id: string; source: string; confidence: string; foundBy: string };
+    const labels = (r: Awaited<ReturnType<typeof searchKnowledgeBase>>) => ((r.data as { results: Hit[] }).results);
+    const dataOf = (r: Awaited<ReturnType<typeof searchKnowledgeBase>>) => (r.data as Record<string, unknown>);
+
+    config.vectorScores = [0.56, 0.39, 0.29];
+    const normal = await searchKnowledgeBase({ query: "retainer pricing" });
+    const byId = (id: string) => labels(normal).find((r) => r.id === id);
+    check("a dual-leg chunk at the top of the vector leg is confident", byId("c-retainer")?.confidence === "confident", labels(normal));
+    check("a dual-leg chunk at only 52% of the best vector score is WEAK (old rule: confident)", byId("c-identity")?.foundBy === "both" && byId("c-identity")?.confidence === "weak", byId("c-identity"));
+    check("a normal query carries no low-confidence flag or note", dataOf(normal).lowConfidence === undefined && dataOf(normal).note === undefined, dataOf(normal));
+
+    // 7. The absolute floor: nothing here is any good.
+    config.vectorScores = [0.2, 0.15, 0.12];
+    const poor = await searchKnowledgeBase({ query: "visa requirements for staff travelling abroad" });
+    check("best similarity under the floor: results are still returned", poor.success === true && labels(poor).length > 0, poor);
+    check("...but EVERY one is weak, even the one both legs ranked first", labels(poor).every((r) => r.confidence === "weak"), labels(poor));
+    check("...and the tool flags it as low confidence", dataOf(poor).lowConfidence === true, dataOf(poor));
+    check("...with a note the model will read, naming the score and the floor", /0\.20/.test(String(dataOf(poor).note)) && /0\.35/.test(String(dataOf(poor).note)), dataOf(poor).note);
+    check("...that tells it to say so, not to answer from these", /doesn't appear to cover it/.test(String(dataOf(poor).note)), dataOf(poor).note);
+
+    // 8. The boundary.
+    config.vectorScores = [0.35, 0.3, 0.2];
+    check("exactly at the floor is NOT low confidence", dataOf(await searchKnowledgeBase({ query: "retainer pricing" })).lowConfidence === undefined);
+    config.vectorScores = [0.349, 0.3, 0.2];
+    check("just under the floor IS low confidence", dataOf(await searchKnowledgeBase({ query: "retainer pricing" })).lowConfidence === true);
+
+    // 9. With the vector leg down there is no raw similarity to judge, so the
+    // floor must not fire: "no information" is not "no match".
+    config.vectorScores = [0.56, 0.39, 0.29];
+    config.vectorDown = true;
+    const degraded = await searchKnowledgeBase({ query: "retainer pricing" });
+    check("vector leg down: search still succeeds on full-text alone", degraded.success === true && labels(degraded).length > 0, degraded);
+    check("vector leg down: the floor does not fire", dataOf(degraded).lowConfidence === undefined, dataOf(degraded));
+    check("vector leg down: nothing is labeled confident through the both-legs door", labels(degraded).every((r) => r.foundBy === "fulltext"), labels(degraded));
+    config.vectorDown = false;
 
     console.log(failures === 0 ? "\nAll checks passed." : `\n${failures} check(s) FAILED.`);
     process.exit(failures === 0 ? 0 : 1);

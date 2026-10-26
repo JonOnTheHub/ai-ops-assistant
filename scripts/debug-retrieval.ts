@@ -3,6 +3,9 @@ import {
     fetchCandidates,
     confidenceForIndex,
     FINAL_COUNT,
+    isLowConfidence,
+    MIN_VECTOR_TOP_SCORE,
+    DUAL_LEG_VECTOR_RATIO,
 } from "@/lib/tools/searchKnowledgeBase";
 
 // Self-serve hybrid-search diagnostic. It runs the REAL pipeline: it calls the
@@ -73,6 +76,12 @@ async function debugRetrieval() {
 
     const contentById = new Map((rows ?? []).map((r) => [r.id, r]));
     const winners = ranked.slice(0, FINAL_COUNT);
+    const lowConfidence = isLowConfidence(vectorRows.length, vectorTopScore);
+
+    if (lowConfidence) {
+        console.log(`LOW CONFIDENCE: best vector similarity ${vectorTopScore.toFixed(4)} is under the ${MIN_VECTOR_TOP_SCORE} floor,`);
+        console.log("so every returned result is labeled WEAK and the planner is told the matches are poor.\n");
+    }
 
     console.log(`${ranked.length} unique candidate(s) after fusion, ranked (top ${FINAL_COUNT} are returned to the app):\n`);
 
@@ -86,14 +95,16 @@ async function debugRetrieval() {
         let label: string;
         if (i >= FINAL_COUNT) {
             label = "not returned";
+        } else if (lowConfidence) {
+            label = "WEAK (below the absolute floor)";
         } else {
             // Exactly what the app computes: over the winners, per item.
-            const confidence = confidenceForIndex(winners, i, vectorTopScore, fulltextTopScore);
+            const confidence = confidenceForIndex(winners, i, vectorTopScore);
             label =
                 confidence === "weak"
                     ? "WEAK"
                     : foundByBoth
-                        ? "CONFIDENT (score-ratio agreement)"
+                        ? `CONFIDENT (both legs, vector within ${Math.round(DUAL_LEG_VECTOR_RATIO * 100)}% of best)`
                         : "CONFIDENT (clear margin)";
         }
 
