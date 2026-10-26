@@ -1,0 +1,126 @@
+[1/21] "fuel card receipts missing investigation procedure"
+   1. CONFIDENT [relevant]   vec 100%  txt 100%  logistics-policy.md: Fuel
+   2. weak      [not relev.] vec  49%  txt  23%  logistics-policy.md: Solmara
+   3. CONFIDENT [not relev.] vec  58%  txt  23%  vendor-management-policy.md: New
+   4. weak      [not relev.] vec  47%  txt  23%  logistics-policy.md: Equipment
+   5. weak      [not relev.] vec  53%  txt   -   logistics-policy.md: Emergency
+[2/21] "what's our retainer pricing"
+   1. CONFIDENT [relevant]   vec 100%  txt 100%  retainer-policy.md: Our
+   2. CONFIDENT [not relev.] vec  51%  txt  62%  agency-identity.md: Solmara
+   3. CONFIDENT [not relev.] vec  69%  txt  50%  vendor-management-policy.md: Contract
+   4. CONFIDENT [not relev.] vec  49%  txt  50%  client-escalation-policy.md: Tier 3
+   5. CONFIDENT [not relev.] vec  46%  txt  50%  client-escalation-policy.md: Communication
+[3/21] "retainer pricing"
+   1. CONFIDENT [relevant]   vec 100%  txt 100%  retainer-policy.md: Our
+   2. CONFIDENT [not relev.] vec  55%  txt  50%  vendor-management-policy.md: Contract
+   3. CONFIDENT [not relev.] vec  54%  txt  50%  client-escalation-policy.md: Communication
+   4. CONFIDENT [not relev.] vec  42%  txt  50%  client-escalation-policy.md: Tier 3
+   5. weak      [not relev.] vec  90%  txt   -   catering-policy.md: Budget
+[4/21] "Solmara Studio retainer pricing"
+   1. CONFIDENT [relevant]   vec 100%  txt 100%  retainer-policy.md: Our
+   2. CONFIDENT [not relev.] vec  55%  txt  50%  vendor-management-policy.md: Contract
+   3. CONFIDENT [not relev.] vec  54%  txt  50%  client-escalation-policy.md: Communication
+   4. CONFIDENT [not relev.] vec  42%  txt  50%  client-escalation-policy.md: Tier 3
+   5. weak      [not relev.] vec  90%  txt   -   catering-policy.md: Budget
+[5/21] "how much should we charge a small business each month for ongoing support"
+   1. CONFIDENT [relevant]   vec 100%  txt  75%  retainer-policy.md: Our
+   2. CONFIDENT [not relev.] vec  62%  txt  67%  client-escalation-policy.md: Tier 1
+   3. CONFIDENT [not relev.] vec  68%  txt  33%  vendor-management-policy.md: New
+   4. weak      [not relev.] vec   -   txt 100%  agency-identity.md: Solmara
+   5. weak      [not relev.] vec  71%  txt   -   catering-policy.md: Budget
+[6/21] "how many security guards do we need for 200 guests"
+   1. CONFIDENT [relevant]   vec 100%  txt 100%  security-policy.md: Staffing
+   2. CONFIDENT [not relev.] vec  88%  txt  67%  security-policy.md: Security
+   3. CONFIDENT [not relev.] vec  80%  txt  70%  catering-policy.md: Event-day
+   4. CONFIDENT [not relev.] vec  70%  txt  72%  security-policy.md: Venue-owned
+   5. CONFIDENT [not relev.] vec  80%  txt  67%  security-policy.md: Credentialing
+[7/21] "what is the cocktail catering budget per head"
+   1. CONFIDENT [relevant]   vec 100%  txt 100%  catering-policy.md: Budget
+   2. CONFIDENT [not relev.] vec  70%  txt  61%  catering-policy.md: Event-day
+   3. CONFIDENT [not relev.] vec  63%  txt  35%  catering-policy.md: International
+   4. CONFIDENT [not relev.] vec  62%  txt  22%  catering-policy.md: Solmara
+   5. weak      [not relev.] vec  46%  txt  39%  catering-policy.md: Waste
+[8/21] "who can approve a goodwill gesture for an unhappy client"
+   1. CONFIDENT [relevant]   vec 100%  txt 100%  client-escalation-policy.md: Goodwill
+   2. CONFIDENT [relevant]   vec  56%  txt  62%  client-escalation-policy.md: Tier 3
+   3. weak      [not relev.] vec  47%  txt  27%  client-escalation-policy.md: Tier 2
+   4. weak      [not relev.] vec  45%  txt  27%  client-escalation-policy.md: Communication
+   5. weak      [not relev.] vec  48%  txt   -   client-escalation-policy.md: Client
+[9/21] "what do vendors need on file before we can book them"
+   1. CONFIDENT [relevant]   vec 100%  txt 100%  vendor-management-policy.md: New
+   2. CONFIDENT [not relev.] vec  75%  txt  93%  vendor-management-policy.md: Category-specific
+   3. CONFIDENT [not relev.] vec  69%  txt  68%  vendor-management-policy.md: Payment
+   4. CONFIDENT [not relev.] vec  63%  txt  72%  vendor-management-policy.md: Performance
+   5. CONFIDENT [not relev.] vec  57%  txt  65%  catering-policy.md: Supplier
+[10/21] "when do vendors get paid"
+   1. CONFIDENT [relevant]   vec 100%  txt 100%  vendor-management-policy.md: Payment
+   2. CONFIDENT [not relev.] vec  73%  txt  93%  vendor-management-policy.md: New
+   3. CONFIDENT [not relev.] vec  75%  txt  93%  vendor-management-policy.md: Category-specific
+   4. CONFIDENT [not relev.] vec  87%  txt  85%  logistics-policy.md: Vendor
+   5. CONFIDENT [not relev.] vec  66%  txt  93%  vendor-management-policy.md: Performance
+[11/21] "what do we do if a vehicle breaks down on event day"
+   1. CONFIDENT [relevant]   vec 100%  txt 100%  logistics-policy.md: Emergency
+   2. CONFIDENT [not relev.] vec  66%  txt  85%  logistics-policy.md: Maintenance
+   3. CONFIDENT [not relev.] vec  61%  txt  53%  logistics-policy.md: Load-in
+   4. CONFIDENT [not relev.] vec  61%  txt  43%  logistics-policy.md: Solmara
+   5. CONFIDENT [not relev.] vec  48%  txt  53%  security-policy.md: Incident
+[12/21] "how much food waste is acceptable"
+   1. CONFIDENT [relevant]   vec 100%  txt 100%  catering-policy.md: Waste
+   2. CONFIDENT [not relev.] vec  53%  txt 100%  catering-policy.md: Solmara
+   3. CONFIDENT [not relev.] vec  48%  txt 100%  catering-policy.md: Supplier
+   4. CONFIDENT [not relev.] vec  41%  txt 100%  vendor-management-policy.md: Category-specific
+   5. weak      [not relev.] vec  64%  txt   -   catering-policy.md: Dietary
+[13/21] "rules for photographing and posting client events on social media"
+   1. CONFIDENT [relevant]   vec 100%  txt 100%  design-brand-guidelines.md: Photography
+   2. CONFIDENT [not relev.] vec  78%  txt  89%  security-policy.md: Staffing
+   3. CONFIDENT [not relev.] vec  71%  txt  59%  security-policy.md: Credentialing
+   4. CONFIDENT [not relev.] vec  63%  txt  67%  agency-identity.md: Solmara
+   5. weak      [not relev.] vec   -   txt  82%  design-brand-guidelines.md: Client-facing
+[14/21] "do staff need badges at large events"
+   1. CONFIDENT [relevant]   vec 100%  txt  95%  security-policy.md: Credentialing
+   2. CONFIDENT [not relev.] vec  86%  txt 100%  security-policy.md: Staffing
+   3. CONFIDENT [not relev.] vec  74%  txt  69%  security-policy.md: Staff
+   4. CONFIDENT [not relev.] vec  65%  txt  73%  design-brand-guidelines.md: Standard
+   5. CONFIDENT [not relev.] vec  72%  txt  58%  catering-policy.md: Event-day
+[15/21] "how do we handle a complaint during the client's event"
+   1. CONFIDENT [not relev.] vec  98%  txt 100%  client-escalation-policy.md: Tier 2
+   2. CONFIDENT [relevant]   vec  88%  txt  73%  client-escalation-policy.md: Tier 3
+   3. CONFIDENT [relevant]   vec 100%  txt  55%  client-escalation-policy.md: Documentation
+   4. CONFIDENT [not relev.] vec  73%  txt  60%  client-escalation-policy.md: Communication
+   5. weak      [not relev.] vec   -   txt  64%  agency-identity.md: Solmara
+[16/21] "imported ingredients approval"
+   1. CONFIDENT [not relev.] vec  96%  txt 100%  catering-policy.md: Supplier
+   2. CONFIDENT [relevant]   vec  84%  txt 100%  catering-policy.md: International
+   3. CONFIDENT [not relev.] vec  70%  txt 100%  catering-policy.md: Budget
+   4. CONFIDENT [not relev.] vec  60%  txt  50%  design-brand-guidelines.md: Version
+   5. weak      [not relev.] vec 100%  txt   -   catering-policy.md: Dietary
+[17/21] "what happens when a vendor misses a delivery"
+   1. CONFIDENT [relevant]   vec  91%  txt 100%  vendor-management-policy.md: Dispute
+   2. CONFIDENT [relevant]   vec  98%  txt  78%  logistics-policy.md: Vendor
+   3. CONFIDENT [relevant]   vec 100%  txt  60%  client-escalation-policy.md: Tier 2
+   4. CONFIDENT [not relev.] vec  69%  txt  70%  vendor-management-policy.md: New
+   5. CONFIDENT [not relev.] vec  78%  txt  40%  vendor-management-policy.md: Performance
+[18/21] "do guests with allergies need special menus"
+   1. CONFIDENT [relevant]   vec 100%  txt  60%  catering-policy.md: Dietary
+   2. CONFIDENT [not relev.] vec  51%  txt 100%  security-policy.md: Staffing
+   3. CONFIDENT [not relev.] vec  55%  txt  40%  catering-policy.md: Solmara
+   4. CONFIDENT [relevant]   vec  84%  txt  37%  catering-policy.md: Any
+   5. weak      [not relev.] vec  48%  txt  40%  catering-policy.md: Event-day
+[19/21] "how long does a vehicle service take"
+   1. CONFIDENT [relevant]   vec 100%  txt 100%  logistics-policy.md: Maintenance
+   2. CONFIDENT [not relev.] vec  61%  txt  54%  logistics-policy.md: Fuel
+   3. CONFIDENT [not relev.] vec  59%  txt  45%  logistics-policy.md: Emergency
+   4. CONFIDENT [not relev.] vec  58%  txt  36%  client-escalation-policy.md: Tier 1
+   5. CONFIDENT [not relev.] vec  52%  txt  36%  client-escalation-policy.md: Tier 2
+[20/21] "fuel"
+   1. CONFIDENT [not relev.] vec 100%  txt  73%  logistics-policy.md: Solmara
+   2. CONFIDENT [relevant]   vec  95%  txt 100%  logistics-policy.md: Fuel
+   3. weak      [not relev.] vec  72%  txt   -   logistics-policy.md: Maintenance
+   4. weak      [not relev.] vec  70%  txt   -   catering-policy.md: International
+   5. weak      [not relev.] vec  61%  txt   -   logistics-policy.md: Emergency
+[21/21] "visa requirements for staff travelling abroad"
+   1. CONFIDENT [not relev.] vec 100%  txt 100%  security-policy.md: Staff
+   2. CONFIDENT [not relev.] vec  79%  txt  85%  security-policy.md: Credentialing
+   3. CONFIDENT [not relev.] vec  69%  txt  53%  design-brand-guidelines.md: Standard
+   4. CONFIDENT [not relev.] vec  61%  txt  53%  design-brand-guidelines.md: Uniforms
+   5. weak      [not relev.] vec  95%  txt   -   security-policy.md: Staffing

@@ -22,6 +22,13 @@ export interface CalItem {
     relevant: boolean;
 }
 
+// One query's best raw vector similarity, and whether the KB can answer it.
+export interface QueryTop {
+    query: string;
+    answerable: boolean;
+    vectorTop: number;
+}
+
 export interface Rule {
     name: string;
     // The threshold for the ratio family, null for the "current" baseline.
@@ -58,6 +65,17 @@ export function buildRules(): Rule[] {
             name: `dual-leg strength >= ${Math.round(theta * 100)}%`,
             theta,
             confident: (item) => (item.foundBy === "both" ? strength(item) >= theta : item.currentConfident),
+        });
+    }
+
+    // The rule that shipped Oct 25: a chunk both legs found is confident only
+    // if its VECTOR similarity is within theta of the best. The full-text ratio
+    // is ignored (it ties at 100% for unrelated chunks on short queries).
+    for (const theta of [0.8, 0.85, 0.9, 0.95]) {
+        rules.push({
+            name: `both legs + vector >= ${Math.round(theta * 100)}%`,
+            theta,
+            confident: (item) => (item.foundBy === "both" ? (item.vectorRatio ?? 0) >= theta : item.currentConfident),
         });
     }
 
@@ -117,4 +135,42 @@ export function recommend(scores: RuleScore[]): RuleScore | null {
 
 export function pct(value: number | null): string {
     return value === null ? "  n/a" : `${(value * 100).toFixed(0).padStart(4)}%`;
+}
+
+// ── The absolute floor ────────────────────────────────────────────────────────
+// Ratios are relative to the pool's own #1, so they can never say "nothing here
+// is any good". A floor on the best RAW vector similarity can. It is safe only
+// if answerable queries all score above it and unanswerable ones below.
+
+export interface FloorAnalysis {
+    maxAbsent: number | null;
+    minAnswerable: number | null;
+    separable: boolean;
+    midpoint: number | null;
+}
+
+export function analyzeFloor(tops: QueryTop[]): FloorAnalysis {
+    const absent = tops.filter((t) => !t.answerable).map((t) => t.vectorTop);
+    const answerable = tops.filter((t) => t.answerable).map((t) => t.vectorTop);
+    const maxAbsent = absent.length ? Math.max(...absent) : null;
+    const minAnswerable = answerable.length ? Math.min(...answerable) : null;
+    const separable = maxAbsent !== null && minAnswerable !== null && maxAbsent < minAnswerable;
+    return {
+        maxAbsent,
+        minAnswerable,
+        separable,
+        midpoint: separable ? ((maxAbsent as number) + (minAnswerable as number)) / 2 : null,
+    };
+}
+
+// What a given floor would do: answerable queries it would wrongly gate (their
+// good results would all be labeled weak, the costly error) and unanswerable
+// ones it would miss (a poor top result still shown as if it might be good).
+export function floorOutcome(tops: QueryTop[], floor: number) {
+    const gated = (t: QueryTop) => t.vectorTop < floor;
+    return {
+        falselyGated: tops.filter((t) => t.answerable && gated(t)).map((t) => t.query),
+        correctlyGated: tops.filter((t) => !t.answerable && gated(t)).map((t) => t.query),
+        missedAbsent: tops.filter((t) => !t.answerable && !gated(t)).map((t) => t.query),
+    };
 }

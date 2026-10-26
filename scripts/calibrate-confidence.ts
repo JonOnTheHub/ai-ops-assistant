@@ -1,6 +1,6 @@
 import { supabase } from "@/lib/supabase";
-import { fetchCandidates, confidenceForIndex, FINAL_COUNT, SCORE_RATIO_THRESHOLD } from "@/lib/tools/searchKnowledgeBase";
-import { scoreAll, recommend, pct, type CalItem } from "./calibration-core";
+import { fetchCandidates, confidenceForIndex, FINAL_COUNT, DUAL_LEG_VECTOR_RATIO, MIN_VECTOR_TOP_SCORE } from "@/lib/tools/searchKnowledgeBase";
+import { scoreAll, recommend, pct, analyzeFloor, floorOutcome, type CalItem, type QueryTop } from "./calibration-core";
 
 // Calibrates the retrieval confidence rule against real queries with known
 // answers. It runs the REAL pipeline (the same fetchCandidates and
@@ -48,6 +48,8 @@ const QUERIES: LabeledQuery[] = [
     { query: "how long does a vehicle service take", relevant: [/maintenance scheduling/i] },
     { query: "fuel", relevant: [/fuel and vehicle-use procedure/i] },
     { query: "visa requirements for staff travelling abroad", relevant: [] },
+    { query: "what is the company pension plan", relevant: [] },
+    { query: "what is the capital of france", relevant: [] },
 ];
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -75,8 +77,9 @@ async function main() {
     const items: CalItem[] = [];
     const misses: string[] = [];
     const skipped: string[] = [];
+    const tops: QueryTop[] = [];
 
-    console.log(`Calibrating against ${QUERIES.length} labeled queries (current threshold: ${Math.round(SCORE_RATIO_THRESHOLD * 100)}%)\n`);
+    console.log(`Calibrating against ${QUERIES.length} labeled queries (dual-leg vector ratio ${Math.round(DUAL_LEG_VECTOR_RATIO * 100)}%, absolute floor ${MIN_VECTOR_TOP_SCORE})\n`);
 
     for (const [index, labeled] of QUERIES.entries()) {
         if (index > 0) await sleep(delayMs);
@@ -90,6 +93,9 @@ async function main() {
             skipped.push(labeled.query);
             continue;
         }
+
+        tops.push({ query: labeled.query, answerable: labeled.relevant.length > 0, vectorTop: pool.vectorTopScore });
+        console.log(`   raw #1 scores: vector ${pool.vectorTopScore.toFixed(4)}  full-text ${pool.fulltextTopScore.toFixed(4)}`);
 
         const winners = pool.ranked.slice(0, FINAL_COUNT);
         if (winners.length === 0) {
@@ -122,7 +128,7 @@ async function main() {
             const vectorRatio = winner.vectorScore !== null && pool.vectorTopScore > 0 ? winner.vectorScore / pool.vectorTopScore : null;
             const fulltextRatio = winner.fulltextScore !== null && pool.fulltextTopScore > 0 ? winner.fulltextScore / pool.fulltextTopScore : null;
             const foundBy = winner.vectorRank !== null && winner.fulltextRank !== null ? "both" : winner.vectorRank !== null ? "vector" : "fulltext";
-            const currentConfident = confidenceForIndex(winners, i, pool.vectorTopScore, pool.fulltextTopScore) === "confident";
+            const currentConfident = confidenceForIndex(winners, i, pool.vectorTopScore) === "confident";
 
             items.push({ query: labeled.query, source, foundBy, vectorRatio, fulltextRatio, currentConfident, relevant });
 
@@ -161,6 +167,27 @@ async function main() {
     if (misses.length > 0) {
         console.log(`\nRetrieval misses (no relevant chunk in the top ${FINAL_COUNT}): ${misses.length}`);
         for (const m of misses) console.log(`   "${m}"`);
+    }
+
+    // The absolute floor: needs the raw best-vector score of every query.
+    const floor = analyzeFloor(tops);
+    console.log(`\nABSOLUTE FLOOR (shipped at ${MIN_VECTOR_TOP_SCORE})`);
+    console.log("best raw vector score per query, answerable vs not:");
+    for (const t of [...tops].sort((a, b) => a.vectorTop - b.vectorTop)) {
+        console.log(`   ${t.vectorTop.toFixed(4)}  ${t.answerable ? "answerable  " : "UNANSWERABLE"}  "${t.query}"`);
+    }
+    console.log(`lowest answerable: ${floor.minAnswerable?.toFixed(4)}   highest unanswerable: ${floor.maxAbsent?.toFixed(4)}`);
+    console.log(floor.separable ? `separable: a floor anywhere between them works; the midpoint is ${floor.midpoint?.toFixed(3)}` : "NOT separable: some unanswerable query scores at or above an answerable one, so a floor alone can't tell them apart");
+    console.log("floor   wrongly gates (answerable)   catches (unanswerable)");
+    for (const f of [0.25, 0.3, 0.325, 0.35, 0.375, 0.4, 0.425, 0.45]) {
+        const o = floorOutcome(tops, f);
+        const nAnswerable = tops.filter((t) => t.answerable).length;
+        const nAbsent = tops.filter((t) => !t.answerable).length;
+        console.log(`${f.toFixed(3)}   ${String(o.falselyGated.length).padStart(3)} of ${nAnswerable}                    ${String(o.correctlyGated.length).padStart(3)} of ${nAbsent}${f === MIN_VECTOR_TOP_SCORE ? "   <- shipped" : ""}`);
+    }
+    const shippedOutcome = floorOutcome(tops, MIN_VECTOR_TOP_SCORE);
+    if (shippedOutcome.falselyGated.length > 0) {
+        console.log(`\n⚠ The shipped floor WRONGLY GATES: ${shippedOutcome.falselyGated.map((q) => `"${q}"`).join(", ")}. Lower MIN_VECTOR_TOP_SCORE.`);
     }
 
     if (relevantCount < 10) {
