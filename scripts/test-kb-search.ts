@@ -8,7 +8,7 @@
 // No env file, no network. Run:
 //   npx tsx scripts/test-kb-search.ts
 
-export { };
+export {};
 
 process.env.SUPABASE_URL = "http://supabase.test";
 process.env.SUPABASE_SERVICE_ROLE_KEY = "test-key";
@@ -150,22 +150,39 @@ async function main() {
     check("a dual-leg chunk at only 52% of the best vector score is WEAK (old rule: confident)", byId("c-identity")?.foundBy === "both" && byId("c-identity")?.confidence === "weak", byId("c-identity"));
     check("a normal query carries no low-confidence flag or note", dataOf(normal).lowConfidence === undefined && dataOf(normal).note === undefined, dataOf(normal));
 
-    // 7. The absolute floor: nothing here is any good.
+    // 7. The poor tier (best similarity under 0.30): nothing here is a match.
     config.vectorScores = [0.2, 0.15, 0.12];
-    const poor = await searchKnowledgeBase({ query: "visa requirements for staff travelling abroad" });
-    check("best similarity under the floor: results are still returned", poor.success === true && labels(poor).length > 0, poor);
+    const poor = await searchKnowledgeBase({ query: "what is the company pension plan" });
+    check("poor match: results are still returned", poor.success === true && labels(poor).length > 0, poor);
     check("...but EVERY one is weak, even the one both legs ranked first", labels(poor).every((r) => r.confidence === "weak"), labels(poor));
     check("...and the tool flags it as low confidence", dataOf(poor).lowConfidence === true, dataOf(poor));
-    check("...with a note the model will read, naming the score and the floor", /0\.20/.test(String(dataOf(poor).note)) && /0\.35/.test(String(dataOf(poor).note)), dataOf(poor).note);
+    check("...with a note the model will read, naming the score and the floor", /0\.20/.test(String(dataOf(poor).note)) && /0\.3 floor/.test(String(dataOf(poor).note)), dataOf(poor).note);
     check("...that tells it to say so, not to answer from these", /doesn't appear to cover it/.test(String(dataOf(poor).note)), dataOf(poor).note);
 
-    // 8. The boundary.
-    config.vectorScores = [0.35, 0.3, 0.2];
-    check("exactly at the floor is NOT low confidence", dataOf(await searchKnowledgeBase({ query: "retainer pricing" })).lowConfidence === undefined);
-    config.vectorScores = [0.349, 0.3, 0.2];
-    check("just under the floor IS low confidence", dataOf(await searchKnowledgeBase({ query: "retainer pricing" })).lowConfidence === true);
+    // 8. The doubtful tier (0.30 to 0.35): terse answerable queries live here
+    // ("fuel" scored 0.312), and so did the on-topic-but-absent "visa" query
+    // (0.337). Dots go hollow, but the model is NOT pushed to deny anything.
+    config.vectorScores = [0.33, 0.25, 0.2];
+    const doubtful = await searchKnowledgeBase({ query: "fuel" });
+    check("doubtful match: every result is weak, even the one both legs ranked first", labels(doubtful).every((r) => r.confidence === "weak"), labels(doubtful));
+    check("...but there is NO low-confidence flag and NO note (a denial would be a wrong answer for 'fuel')", dataOf(doubtful).lowConfidence === undefined && dataOf(doubtful).note === undefined, dataOf(doubtful));
 
-    // 9. With the vector leg down there is no raw similarity to judge, so the
+    // 9. The boundaries, exactly.
+    const tier = async (top: number) => {
+        config.vectorScores = [top, top - 0.05, top - 0.1];
+        const r = await searchKnowledgeBase({ query: "retainer pricing" });
+        return { poor: dataOf(r).lowConfidence === true, weakTop: labels(r)[0]?.confidence === "weak" };
+    };
+    const at299 = await tier(0.299);
+    const at300 = await tier(0.3);
+    const at349 = await tier(0.349);
+    const at350 = await tier(0.35);
+    check("0.299 is poor", at299.poor && at299.weakTop, at299);
+    check("exactly 0.30 is doubtful, not poor", !at300.poor && at300.weakTop, at300);
+    check("0.349 is doubtful", !at349.poor && at349.weakTop, at349);
+    check("exactly 0.35 is fine: the normal rule applies and the top result is confident", !at350.poor && !at350.weakTop, at350);
+
+    // 10. With the vector leg down there is no raw similarity to judge, so the
     // floor must not fire: "no information" is not "no match".
     config.vectorScores = [0.56, 0.39, 0.29];
     config.vectorDown = true;

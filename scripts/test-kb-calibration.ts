@@ -105,14 +105,14 @@ interface Parsed {
     rank: number;
 }
 
-function parseFixture(): Parsed[] {
+function parseFixture(file: string): Parsed[] {
     const out: Parsed[] = [];
     let queryIndex = 0;
     let query = "";
     const ratio = (token: string) => (token === "-" ? null : Number(token.replace("%", "")) / 100);
 
-    for (const line of readFileSync(new URL("./fixtures/calibration-2026-10-25.txt", import.meta.url), "utf8").split(/\r?\n/)) {
-        const header = line.match(/^\[(\d+)\/21\] "(.*)"/);
+    for (const line of readFileSync(new URL(`./fixtures/${file}`, import.meta.url), "utf8").split(/\r?\n/)) {
+        const header = line.match(/^\[(\d+)\/\d+\] "(.*)"/);
         if (header) {
             queryIndex = Number(header[1]);
             query = header[2];
@@ -139,7 +139,7 @@ function parseFixture(): Parsed[] {
     return out;
 }
 
-const parsed = parseFixture();
+const parsed = parseFixture("calibration-2026-10-25.txt");
 // Four results my regex labels called "not relevant" are plainly on-topic
 // answers (a Tier 2 complaint chunk for a complaint question, perishable-sourcing
 // rules for an imported-ingredients question, the fleet/fuel overview for "fuel",
@@ -153,21 +153,6 @@ const realBy = (name: string) => realScores.find((s) => s.rule.name === name);
 console.log(`\n      real run: ${parsed.length} parsed, ${real.length} scored, ${real.filter((i) => i.relevant).length} relevant`);
 for (const s of realScores) {
     console.log(`      ${s.rule.name.padEnd(34)} TP ${String(s.tp).padStart(2)}  FP ${String(s.fp).padStart(2)}  FN ${String(s.fn).padStart(2)}   precision ${s.precision === null ? "n/a" : (s.precision * 100).toFixed(0) + "%"}   recall ${s.recall === null ? "n/a" : (s.recall * 100).toFixed(0) + "%"}`);
-}
-
-const topsFixture: QueryTop[] = [
-    { query: "fuel card receipts missing investigation procedure", answerable: true, vectorTop: 0.4254 },
-    { query: "what's our retainer pricing", answerable: true, vectorTop: 0.5595 },
-    { query: "retainer pricing", answerable: true, vectorTop: 0.4048 },
-    { query: "visa requirements for staff travelling abroad", answerable: false, vectorTop: 0.337 },
-    { query: "what is the company pension plan", answerable: false, vectorTop: 0.1906 },
-    { query: "what is the capital of france", answerable: false, vectorTop: 0.1691 },
-];
-const floorInfo = analyzeFloor(topsFixture);
-console.log(`      floor: highest unanswerable ${floorInfo.maxAbsent}, lowest answerable ${floorInfo.minAnswerable}, separable ${floorInfo.separable}, midpoint ${floorInfo.midpoint?.toFixed(4)}`);
-for (const f of [0.3, 0.35, 0.4, 0.45]) {
-    const o = floorOutcome(topsFixture, f);
-    console.log(`      floor ${f}: wrongly gates ${o.falselyGated.length}, catches ${o.correctlyGated.length} of 3`);
 }
 
 // ── what the real run proves ─────────────────────────────────────────────────
@@ -187,18 +172,57 @@ check("NEW rule gains more than 60 points of precision over the old one", (newRu
 check("the 80% variant trades precision for recall (83% / 96%)", newRule80?.tp === 24 && newRule80?.fp === 5, newRule80);
 check("recommend() prefers the vector-ratio family over any full-text-inflated threshold", recommend(realScores)?.rule.name.startsWith("both legs + vector") === true, recommend(realScores)?.rule.name);
 
-check("floor: the six queries are separable (0.337 vs 0.405)", floorInfo.separable && floorInfo.maxAbsent === 0.337 && floorInfo.minAnswerable === 0.4048, floorInfo);
-check("floor 0.35: gates all 3 unanswerable queries and no answerable one", floorOutcome(topsFixture, 0.35).correctlyGated.length === 3 && floorOutcome(topsFixture, 0.35).falselyGated.length === 0);
-check("floor 0.30 would miss the on-topic-but-absent 'visa' query", floorOutcome(topsFixture, 0.3).missedAbsent.length === 1 && floorOutcome(topsFixture, 0.3).missedAbsent[0].includes("visa"));
-check("floor 0.45 would WRONGLY gate two answerable queries", floorOutcome(topsFixture, 0.45).falselyGated.length === 2, floorOutcome(topsFixture, 0.45).falselyGated);
+
+// ── Oct 26: the second run, with raw best scores for all 23 queries ──────────
+const run2 = readFileSync(new URL("./fixtures/calibration-2026-10-26.txt", import.meta.url), "utf8").split(/\r?\n/);
+const UNANSWERABLE = new Set(["visa requirements for staff travelling abroad", "what is the company pension plan", "what is the capital of france"]);
+const tops: QueryTop[] = [];
+{
+    let q = "";
+    for (const line of run2) {
+        const h = line.match(/^\[\d+\/\d+\] "(.*)"/);
+        if (h) q = h[1];
+        const r = line.match(/raw #1 scores: vector ([0-9.]+)/);
+        if (r) tops.push({ query: q, answerable: !UNANSWERABLE.has(q), vectorTop: Number(r[1]) });
+    }
+}
+const floorInfo = analyzeFloor(tops);
+const POOR = Number(readFileSync(new URL("../lib/tools/searchKnowledgeBase.ts", import.meta.url), "utf8").match(/MIN_VECTOR_TOP_SCORE\s*=\s*([0-9.]+)/)?.[1]);
+const DOUBTFUL = Number(readFileSync(new URL("../lib/tools/searchKnowledgeBase.ts", import.meta.url), "utf8").match(/DOUBTFUL_VECTOR_TOP_SCORE\s*=\s*([0-9.]+)/)?.[1]);
+const poorOutcome = floorOutcome(tops, POOR);
+const doubtfulOutcome = floorOutcome(tops, DOUBTFUL);
+
+console.log(`\n      run 2: ${tops.length} queries, lowest answerable ${floorInfo.minAnswerable}, highest unanswerable ${floorInfo.maxAbsent}`);
+console.log(`      poor tier < ${POOR}: wrongly denies ${poorOutcome.falselyGated.length}, catches ${poorOutcome.correctlyGated.length} of 3`);
+console.log(`      doubtful tier < ${DOUBTFUL}: hollow dots on ${doubtfulOutcome.falselyGated.length} answerable, catches ${doubtfulOutcome.correctlyGated.length} of 3\n`);
+
+check("run 2: 23 queries, 20 answerable and 3 not", tops.length === 23 && tops.filter((t) => t.answerable).length === 20, tops.length);
+check("run 2: NOT separable by one floor: the on-topic-but-absent 'visa' query (0.337) outscores two answerable ones", !floorInfo.separable && floorInfo.maxAbsent === 0.337 && floorInfo.minAnswerable === 0.3118, floorInfo);
+check("...the two answerable ones are 'fuel' and 'imported ingredients approval'", floorOutcome(tops, 0.32).falselyGated.length === 2 && floorOutcome(tops, 0.32).falselyGated.every((q) => q === "fuel" || q === "imported ingredients approval"), floorOutcome(tops, 0.32).falselyGated);
+check("a single 0.35 floor used as a DENIAL would have wrongly denied those 2 answerable queries", floorOutcome(tops, 0.35).falselyGated.length === 2);
+check("poor tier: wrongly denies NO answerable query", poorOutcome.falselyGated.length === 0, poorOutcome.falselyGated);
+check("poor tier: catches both off-topic queries (pension, France)", poorOutcome.correctlyGated.length === 2, poorOutcome.correctlyGated);
+check("poor tier: misses only the on-topic-but-absent one (visa), whose dots the doubtful tier hollows", poorOutcome.missedAbsent.length === 1 && poorOutcome.missedAbsent[0].includes("visa"), poorOutcome.missedAbsent);
+check("doubtful tier: catches all 3 unanswerable queries", doubtfulOutcome.correctlyGated.length === 3, doubtfulOutcome.correctlyGated);
+check("doubtful tier: costs 2 answerable queries a hollow dot, and nothing worse", doubtfulOutcome.falselyGated.length === 2);
+
+// Dots as the app now shows them: a poor or doubtful best match turns every dot
+// hollow, whatever the per-item rule said.
+const topByQuery = new Map(tops.map((t) => [t.query, t.vectorTop]));
+const run2Items = parseFixture("calibration-2026-10-26.txt").map((p) => p.item);
+const withTiers: CalItem[] = run2Items.map((i) => ({ ...i, currentConfident: i.currentConfident && (topByQuery.get(i.query) ?? 1) >= DOUBTFUL }));
+const sameRule = scoreRule(withTiers, buildRules().find((r) => r.name === "current rule (as shipped)") as never);
+console.log(`      shipped rule + tiers on run 2 (115 results, nothing excluded): TP ${sameRule.tp}  FP ${sameRule.fp}  FN ${sameRule.fn}  precision ${((sameRule.precision ?? 0) * 100).toFixed(0)}%  recall ${((sameRule.recall ?? 0) * 100).toFixed(0)}%`);
+check("with tiers applied, no unanswerable query shows a solid dot", withTiers.filter((i) => UNANSWERABLE.has(i.query)).every((i) => !i.currentConfident));
+check("with tiers applied, the only solid dot on an unlabeled-relevant chunk is the Tier 2 complaint chunk", withTiers.filter((i) => i.currentConfident && !i.relevant).length === 1, withTiers.filter((i) => i.currentConfident && !i.relevant).map((i) => i.query + " -> " + i.source));
 
 // ── drift guard: the shipped constants must still sit inside the evidence ────
 const source = readFileSync(new URL("../lib/tools/searchKnowledgeBase.ts", import.meta.url), "utf8");
-const shippedFloor = Number(source.match(/MIN_VECTOR_TOP_SCORE\s*=\s*([0-9.]+)/)?.[1]);
 const shippedRatio = Number(source.match(/DUAL_LEG_VECTOR_RATIO\s*=\s*([0-9.]+)/)?.[1]);
-check("shipped floor is read from the source", Number.isFinite(shippedFloor), shippedFloor);
-check("shipped floor sits in the gap between the unanswerable and answerable scores", shippedFloor > (floorInfo.maxAbsent ?? 1) && shippedFloor < (floorInfo.minAnswerable ?? 0), shippedFloor);
-check("shipped dual-leg ratio is a value this run evaluated, and it is the 90% one", shippedRatio === 0.9, shippedRatio);
+check("poor tier is below EVERY answerable query measured, so it can never deny one", POOR < (floorInfo.minAnswerable ?? 0), POOR);
+check("doubtful tier is above EVERY unanswerable query measured, so none keeps a solid dot", DOUBTFUL > (floorInfo.maxAbsent ?? 1), DOUBTFUL);
+check("the tiers are ordered", POOR < DOUBTFUL, [POOR, DOUBTFUL]);
+check("shipped dual-leg ratio is the 90% one this evidence supports", shippedRatio === 0.9, shippedRatio);
 
 console.log(failures === 0 ? "\nAll checks passed." : `\n${failures} check(s) FAILED.`);
 process.exit(failures === 0 ? 0 : 1);

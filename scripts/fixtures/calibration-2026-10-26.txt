@@ -1,0 +1,161 @@
+[1/23] "fuel card receipts missing investigation procedure"
+   raw #1 scores: vector 0.4254  full-text 0.0442
+   1. CONFIDENT [relevant]   vec 100%  txt 100%  logistics-policy.md: Fuel
+   2. weak      [not relev.] vec  49%  txt  23%  logistics-policy.md: Solmara
+   3. weak      [not relev.] vec  58%  txt  23%  vendor-management-policy.md: New
+   4. weak      [not relev.] vec  47%  txt  23%  logistics-policy.md: Equipment
+   5. weak      [not relev.] vec  53%  txt   -   logistics-policy.md: Emergency
+[2/23] "what's our retainer pricing"
+   raw #1 scores: vector 0.5605  full-text 0.0608
+   1. CONFIDENT [relevant]   vec 100%  txt 100%  retainer-policy.md: Our
+   2. weak      [not relev.] vec  51%  txt  62%  agency-identity.md: Solmara
+   3. weak      [not relev.] vec  69%  txt  50%  vendor-management-policy.md: Contract
+   4. weak      [not relev.] vec  49%  txt  50%  client-escalation-policy.md: Tier
+   5. weak      [not relev.] vec  46%  txt  50%  client-escalation-policy.md: Communication
+[3/23] "retainer pricing"
+   raw #1 scores: vector 0.4048  full-text 0.0608
+   1. CONFIDENT [relevant]   vec 100%  txt 100%  retainer-policy.md: Our
+   2. weak      [not relev.] vec  55%  txt  50%  vendor-management-policy.md: Contract
+   3. weak      [not relev.] vec  54%  txt  50%  client-escalation-policy.md: Communication
+   4. weak      [not relev.] vec  42%  txt  50%  client-escalation-policy.md: Tier
+   5. weak      [not relev.] vec  90%  txt   -   catering-policy.md: Budget
+[4/23] "Solmara Studio retainer pricing"
+   raw #1 scores: vector 0.4042  full-text 0.0608
+   1. CONFIDENT [relevant]   vec 100%  txt 100%  retainer-policy.md: Our
+   2. weak      [not relev.] vec  55%  txt  50%  vendor-management-policy.md: Contract
+   3. weak      [not relev.] vec  54%  txt  50%  client-escalation-policy.md: Communication
+   4. weak      [not relev.] vec  41%  txt  50%  client-escalation-policy.md: Tier
+   5. weak      [not relev.] vec  90%  txt   -   catering-policy.md: Budget
+[5/23] "how much should we charge a small business each month for ongoing support"
+   raw #1 scores: vector 0.4189  full-text 0.0261
+   1. CONFIDENT [relevant]   vec 100%  txt  75%  retainer-policy.md: Our
+   2. weak      [not relev.] vec  62%  txt  67%  client-escalation-policy.md: Tier
+   3. weak      [not relev.] vec  68%  txt  33%  vendor-management-policy.md: New
+   4. weak      [not relev.] vec   -   txt 100%  agency-identity.md: Solmara
+   5. weak      [not relev.] vec  71%  txt   -   catering-policy.md: Budget
+[6/23] "how many security guards do we need for 200 guests"
+   raw #1 scores: vector 0.5563  full-text 0.0341
+   1. CONFIDENT [relevant]   vec 100%  txt 100%  security-policy.md: Staffing
+   2. weak      [not relev.] vec  88%  txt  67%  security-policy.md: Security
+   3. weak      [not relev.] vec  80%  txt  70%  catering-policy.md: Event-day
+   4. weak      [not relev.] vec  70%  txt  72%  security-policy.md: Venue-owned
+   5. weak      [not relev.] vec  80%  txt  67%  security-policy.md: Credentialing
+[7/23] "what is the cocktail catering budget per head"
+   raw #1 scores: vector 0.6815  full-text 0.0696
+   1. CONFIDENT [relevant]   vec 100%  txt 100%  catering-policy.md: Budget
+   2. weak      [not relev.] vec  70%  txt  61%  catering-policy.md: Event-day
+   3. weak      [not relev.] vec  63%  txt  35%  catering-policy.md: International
+   4. weak      [not relev.] vec  62%  txt  22%  catering-policy.md: Solmara
+   5. weak      [not relev.] vec  46%  txt  39%  catering-policy.md: Waste
+[8/23] "who can approve a goodwill gesture for an unhappy client"
+   raw #1 scores: vector 0.6535  full-text 0.0635
+   1. CONFIDENT [relevant]   vec 100%  txt 100%  client-escalation-policy.md: Goodwill
+   2. weak      [relevant]   vec  56%  txt  62%  client-escalation-policy.md: Tier
+   3. weak      [not relev.] vec  47%  txt  27%  client-escalation-policy.md: Tier
+   4. weak      [not relev.] vec  45%  txt  27%  client-escalation-policy.md: Communication
+   5. weak      [not relev.] vec  48%  txt   -   client-escalation-policy.md: Client
+[9/23] "what do vendors need on file before we can book them"
+   raw #1 scores: vector 0.6030  full-text 0.0549
+   1. CONFIDENT [relevant]   vec 100%  txt 100%  vendor-management-policy.md: New
+   2. weak      [not relev.] vec  75%  txt  93%  vendor-management-policy.md: Category-specific
+   3. weak      [not relev.] vec  69%  txt  68%  vendor-management-policy.md: Payment
+   4. weak      [not relev.] vec  63%  txt  72%  vendor-management-policy.md: Performance
+   5. weak      [not relev.] vec  57%  txt  65%  catering-policy.md: Supplier
+[10/23] "when do vendors get paid"
+   raw #1 scores: vector 0.4925  full-text 0.0297
+   1. CONFIDENT [relevant]   vec 100%  txt 100%  vendor-management-policy.md: Payment
+   2. weak      [not relev.] vec  73%  txt  93%  vendor-management-policy.md: New
+   3. weak      [not relev.] vec  75%  txt  93%  vendor-management-policy.md: Category-specific
+   4. weak      [not relev.] vec  87%  txt  85%  logistics-policy.md: Vendor
+   5. weak      [not relev.] vec  66%  txt  93%  vendor-management-policy.md: Performance
+[11/23] "what do we do if a vehicle breaks down on event day"
+   raw #1 scores: vector 0.6757  full-text 0.0701
+   1. CONFIDENT [relevant]   vec 100%  txt 100%  logistics-policy.md: Emergency
+   2. weak      [not relev.] vec  66%  txt  85%  logistics-policy.md: Maintenance
+   3. weak      [not relev.] vec  61%  txt  53%  logistics-policy.md: Load-in
+   4. weak      [not relev.] vec  61%  txt  43%  logistics-policy.md: Solmara
+   5. weak      [not relev.] vec  48%  txt  53%  security-policy.md: Incident
+[12/23] "how much food waste is acceptable"
+   raw #1 scores: vector 0.5709  full-text 0.0152
+   1. CONFIDENT [relevant]   vec 100%  txt 100%  catering-policy.md: Waste
+   2. weak      [not relev.] vec  53%  txt 100%  catering-policy.md: Solmara
+   3. weak      [not relev.] vec  48%  txt 100%  catering-policy.md: Supplier
+   4. weak      [not relev.] vec  41%  txt 100%  vendor-management-policy.md: Category-specific
+   5. weak      [not relev.] vec  64%  txt   -   catering-policy.md: Dietary
+[13/23] "rules for photographing and posting client events on social media"
+   raw #1 scores: vector 0.5933  full-text 0.0369
+   1. CONFIDENT [relevant]   vec 100%  txt 100%  design-brand-guidelines.md: Photography
+   2. weak      [not relev.] vec  78%  txt  89%  security-policy.md: Staffing
+   3. weak      [not relev.] vec  71%  txt  59%  security-policy.md: Credentialing
+   4. weak      [not relev.] vec  63%  txt  67%  agency-identity.md: Solmara
+   5. weak      [not relev.] vec   -   txt  82%  design-brand-guidelines.md: Client-facing
+[14/23] "do staff need badges at large events"
+   raw #1 scores: vector 0.5352  full-text 0.0416
+   1. CONFIDENT [relevant]   vec 100%  txt  95%  security-policy.md: Credentialing
+   2. weak      [not relev.] vec  86%  txt 100%  security-policy.md: Staffing
+   3. weak      [not relev.] vec  74%  txt  69%  security-policy.md: Staff
+   4. weak      [not relev.] vec  65%  txt  73%  design-brand-guidelines.md: Standard
+   5. weak      [not relev.] vec  72%  txt  58%  catering-policy.md: Event-day
+[15/23] "how do we handle a complaint during the client's event"
+   raw #1 scores: vector 0.4932  full-text 0.0672
+   1. CONFIDENT [not relev.] vec  98%  txt 100%  client-escalation-policy.md: Tier
+   2. weak      [relevant]   vec  88%  txt  73%  client-escalation-policy.md: Tier
+   3. CONFIDENT [relevant]   vec 100%  txt  55%  client-escalation-policy.md: Documentation
+   4. weak      [not relev.] vec  73%  txt  60%  client-escalation-policy.md: Communication
+   5. weak      [not relev.] vec   -   txt  64%  agency-identity.md: Solmara
+[16/23] "imported ingredients approval"
+   raw #1 scores: vector 0.3165  full-text 0.0405
+   1. CONFIDENT [not relev.] vec  96%  txt 100%  catering-policy.md: Supplier
+   2. weak      [relevant]   vec  84%  txt 100%  catering-policy.md: International
+   3. weak      [not relev.] vec  71%  txt 100%  catering-policy.md: Budget
+   4. weak      [not relev.] vec  61%  txt  50%  design-brand-guidelines.md: Version
+   5. weak      [not relev.] vec 100%  txt   -   catering-policy.md: Dietary
+[17/23] "what happens when a vendor misses a delivery"
+   raw #1 scores: vector 0.4460  full-text 0.0511
+   1. CONFIDENT [relevant]   vec  91%  txt 100%  vendor-management-policy.md: Dispute
+   2. CONFIDENT [relevant]   vec  98%  txt  78%  logistics-policy.md: Vendor
+   3. CONFIDENT [relevant]   vec 100%  txt  60%  client-escalation-policy.md: Tier
+   4. weak      [not relev.] vec  69%  txt  70%  vendor-management-policy.md: New
+   5. weak      [not relev.] vec  78%  txt  40%  vendor-management-policy.md: Performance
+[18/23] "do guests with allergies need special menus"
+   raw #1 scores: vector 0.6523  full-text 0.0409
+   1. CONFIDENT [relevant]   vec 100%  txt  60%  catering-policy.md: Dietary
+   2. weak      [not relev.] vec  51%  txt 100%  security-policy.md: Staffing
+   3. weak      [not relev.] vec  55%  txt  40%  catering-policy.md: Solmara
+   4. weak      [relevant]   vec  84%  txt  37%  catering-policy.md: Any
+   5. weak      [not relev.] vec  48%  txt  40%  catering-policy.md: Event-day
+[19/23] "how long does a vehicle service take"
+   raw #1 scores: vector 0.4970  full-text 0.0423
+   1. CONFIDENT [relevant]   vec 100%  txt 100%  logistics-policy.md: Maintenance
+   2. weak      [not relev.] vec  61%  txt  54%  logistics-policy.md: Fuel
+   3. weak      [not relev.] vec  59%  txt  45%  logistics-policy.md: Emergency
+   4. weak      [not relev.] vec  58%  txt  36%  client-escalation-policy.md: Tier
+   5. weak      [not relev.] vec  52%  txt  36%  client-escalation-policy.md: Tier
+[20/23] "fuel"
+   raw #1 scores: vector 0.3118  full-text 0.0827
+   1. CONFIDENT [not relev.] vec 100%  txt  73%  logistics-policy.md: Solmara
+   2. CONFIDENT [relevant]   vec  95%  txt 100%  logistics-policy.md: Fuel
+   3. weak      [not relev.] vec  72%  txt   -   logistics-policy.md: Maintenance
+   4. weak      [not relev.] vec  70%  txt   -   catering-policy.md: International
+   5. weak      [not relev.] vec  61%  txt   -   logistics-policy.md: Emergency
+[21/23] "visa requirements for staff travelling abroad"
+   raw #1 scores: vector 0.3370  full-text 0.0287
+   1. CONFIDENT [not relev.] vec 100%  txt 100%  security-policy.md: Staff
+   2. weak      [not relev.] vec  79%  txt  85%  security-policy.md: Credentialing
+   3. weak      [not relev.] vec  69%  txt  53%  design-brand-guidelines.md: Standard
+   4. weak      [not relev.] vec  61%  txt  53%  design-brand-guidelines.md: Uniforms
+   5. weak      [not relev.] vec  95%  txt   -   security-policy.md: Staffing
+[22/23] "what is the company pension plan"
+   raw #1 scores: vector 0.1906  full-text 0.0203
+   1. CONFIDENT [not relev.] vec 100%  txt 100%  logistics-policy.md: Fuel
+   2. CONFIDENT [not relev.] vec  92%  txt 100%  logistics-policy.md: Solmara
+   3. weak      [not relev.] vec  53%  txt 100%  client-escalation-policy.md: Documentation
+   4. weak      [not relev.] vec  43%  txt 100%  client-escalation-policy.md: Tier
+   5. weak      [not relev.] vec  41%  txt 100%  client-escalation-policy.md: Tier
+[23/23] "what is the capital of france"
+   raw #1 scores: vector 0.1691  full-text 0.0000
+   1. weak      [not relev.] vec 100%  txt   -   design-brand-guidelines.md: Version
+   2. weak      [not relev.] vec  78%  txt   -   catering-policy.md: International
+   3. weak      [not relev.] vec  75%  txt   -   agency-identity.md: Solmara
+   4. weak      [not relev.] vec  75%  txt   -   security-policy.md: Escalation
+   5. weak      [not relev.] vec  66%  txt   -   client-escalation-policy.md: Tier

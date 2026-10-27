@@ -3,8 +3,9 @@ import {
     fetchCandidates,
     confidenceForIndex,
     FINAL_COUNT,
-    isLowConfidence,
+    retrievalQuality,
     MIN_VECTOR_TOP_SCORE,
+    DOUBTFUL_VECTOR_TOP_SCORE,
     DUAL_LEG_VECTOR_RATIO,
 } from "@/lib/tools/searchKnowledgeBase";
 
@@ -76,11 +77,14 @@ async function debugRetrieval() {
 
     const contentById = new Map((rows ?? []).map((r) => [r.id, r]));
     const winners = ranked.slice(0, FINAL_COUNT);
-    const lowConfidence = isLowConfidence(vectorRows.length, vectorTopScore);
+    const quality = retrievalQuality(vectorRows.length, vectorTopScore);
 
-    if (lowConfidence) {
-        console.log(`LOW CONFIDENCE: best vector similarity ${vectorTopScore.toFixed(4)} is under the ${MIN_VECTOR_TOP_SCORE} floor,`);
-        console.log("so every returned result is labeled WEAK and the planner is told the matches are poor.\n");
+    if (quality === "poor") {
+        console.log(`POOR MATCH: best vector similarity ${vectorTopScore.toFixed(4)} is under ${MIN_VECTOR_TOP_SCORE}.`);
+        console.log("Every returned result is labeled WEAK and the planner is told the matches are poor.\n");
+    } else if (quality === "doubtful") {
+        console.log(`DOUBTFUL MATCH: best vector similarity ${vectorTopScore.toFixed(4)} is under ${DOUBTFUL_VECTOR_TOP_SCORE}.`);
+        console.log("Every returned result is labeled WEAK, but the planner is NOT told to deny anything.\n");
     }
 
     console.log(`${ranked.length} unique candidate(s) after fusion, ranked (top ${FINAL_COUNT} are returned to the app):\n`);
@@ -95,8 +99,8 @@ async function debugRetrieval() {
         let label: string;
         if (i >= FINAL_COUNT) {
             label = "not returned";
-        } else if (lowConfidence) {
-            label = "WEAK (below the absolute floor)";
+        } else if (quality !== "ok") {
+            label = quality === "poor" ? "WEAK (poor match overall)" : "WEAK (doubtful match overall)";
         } else {
             // Exactly what the app computes: over the winners, per item.
             const confidence = confidenceForIndex(winners, i, vectorTopScore);

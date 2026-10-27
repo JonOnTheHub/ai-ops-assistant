@@ -42,15 +42,27 @@ export const MARGIN_MULTIPLIER = 1.3;
 // on a relevant card only understates.
 export const DUAL_LEG_VECTOR_RATIO = 0.9;
 
-// Absolute floor on the BEST raw vector similarity. Ratios are relative to the
+// Absolute floors on the BEST raw vector similarity. Ratios are relative to the
 // pool's own #1, so the top result is always 100% of itself and the ratio rule
-// can never say "nothing here is any good" (the unanswerable query "visa
-// requirements" had its irrelevant #1 labeled confident). Raw scores can:
-// unanswerable queries topped out at 0.337 (on-topic but absent), 0.191 and
-// 0.169 (off-topic), answerable ones at 0.405 or better. Set conservatively
-// below the gap; re-check with scripts/calibrate-confidence.ts, which prints the
-// raw top score for every query.
-export const MIN_VECTOR_TOP_SCORE = 0.35;
+// can never say "nothing here is any good". Raw scores can, but no single
+// number separates everything. Measured on 23 labeled queries (Oct 26):
+//   unanswerable: 0.169 and 0.191 (off-topic), 0.337 (on-topic but absent)
+//   answerable:   0.312 ("fuel") and 0.317 ("imported ingredients approval"),
+//                 then 0.404 and up
+// Terse answerable queries score BELOW the on-topic-but-absent one, so the two
+// tiers exist because the errors are not equally costly:
+//   below MIN (0.30)       "poor": nothing here is a match. Every result is
+//                          weak and the model is told so. Below every answerable
+//                          query measured, so it never wrongly denies one.
+//   MIN to DOUBTFUL (0.35) "doubtful": every result is weak, but the model is NOT
+//                          told to deny anything. A hollow dot on a good result
+//                          only understates; a solid dot on an irrelevant one is
+//                          a false claim; and forcing "the KB doesn't cover it"
+//                          onto a terse answerable query would be a wrong answer.
+// Re-check both with scripts/calibrate-confidence.ts, which prints the raw best
+// score of every query and what each band would do.
+export const MIN_VECTOR_TOP_SCORE = 0.3;
+export const DOUBTFUL_VECTOR_TOP_SCORE = 0.35;
 
 // Terms that carry zero discriminating signal in THIS corpus specifically
 // — nearly every document opens with a "Solmara Studio ..." framing
@@ -127,11 +139,14 @@ export function fuse(
     );
 }
 
-// True when the best raw vector match is too weak to trust anything returned.
-// Only judged when the vector leg actually ran: with it down there is no raw
-// similarity to judge, and "no information" must not read as "no match".
-export function isLowConfidence(vectorRowCount: number, vectorTopScore: number): boolean {
-    return vectorRowCount > 0 && vectorTopScore < MIN_VECTOR_TOP_SCORE;
+// How much to trust the best match at all. Only judged when the vector leg
+// actually ran: with it down there is no raw similarity to judge, and "no
+// information" must not read as "no match".
+export function retrievalQuality(vectorRowCount: number, vectorTopScore: number): "poor" | "doubtful" | "ok" {
+    if (vectorRowCount === 0) return "ok";
+    if (vectorTopScore < MIN_VECTOR_TOP_SCORE) return "poor";
+    if (vectorTopScore < DOUBTFUL_VECTOR_TOP_SCORE) return "doubtful";
+    return "ok";
 }
 
 // Per-item confidence label, shown as a dot on every context card.
@@ -262,7 +277,8 @@ export async function searchKnowledgeBase(args: {
     }
 
     const { ranked, vectorTopScore } = pool;
-    const lowConfidence = isLowConfidence(pool.vectorRows.length, vectorTopScore);
+    const quality = retrievalQuality(pool.vectorRows.length, vectorTopScore);
+    const lowConfidence = quality === "poor";
 
     if (ranked.length === 0) {
         return {
@@ -303,7 +319,7 @@ export async function searchKnowledgeBase(args: {
                 id: row.id,
                 content: row.content,
                 source: row.source,
-                confidence: lowConfidence ? "weak" : confidenceForIndex(winners, i, vectorTopScore),
+                confidence: quality !== "ok" ? "weak" : confidenceForIndex(winners, i, vectorTopScore),
                 foundBy:
                     w.vectorRank !== null && w.fulltextRank !== null
                         ? "both"
