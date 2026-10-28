@@ -4,6 +4,7 @@ import { sendEmail } from "@/lib/tools/sendEmail";
 import { sendBroadcast } from "@/lib/tools/sendBroadcast";
 import { writeTrace } from "@/lib/tracing";
 import { classifyToolResult, classifyThrown } from "@/lib/agent/classifier";
+import { validateDraftEdit } from "@/lib/agent/draftEdit";
 import { ToolName, ToolResult, BroadcastRecipient } from "@/types";
 
 const supabase = createClient(
@@ -135,4 +136,100 @@ export async function POST(
             { status: 500 }
         );
     }
+}
+
+// PATCH /api/actions/[id]
+//
+// Edit the subject and/or body of a draft that is still waiting for approval.
+// The approve route executes the STORED action, so an edit has to be saved
+// here, before approval, or what the person approved wouldn't be what is sent.
+// Only a pending email or broadcast can be edited, only subject and body can
+// change (draftEdit.ts rejects everything else, recipients included), and every
+// change is recorded in the trace with the text before and after, so what the
+// model proposed versus what a person sent is always recoverable.
+export async function PATCH(
+    req: NextRequest,
+    { params }: { params: Promise<{ id: string }> }
+) {
+    const { id } = await params;
+
+    let payload: unknown;
+    try {
+        payload = await req.json();
+    } catch {
+        return NextResponse.json({ error: "The request body must be valid JSON." }, { status: 400 });
+    }
+
+    const { data: pending, error: fetchError } = await supabase
+        .from("pending_actions")
+        .select("*")
+        .eq("id", id)
+        .eq("status", "pending")
+        .single();
+
+    if (fetchError || !pending) {
+        return NextResponse.json(
+            { error: "Pending action not found or already resolved" },
+            { status: 404 }
+        );
+    }
+
+    const stored = (pending.proposed_args ?? {}) as Record<string, unknown>;
+    const edit = validateDraftEdit(pending.tool_name, stored, payload);
+
+    if (!edit.ok) {
+        return NextResponse.json({ error: edit.error }, { status: 400 });
+    }
+
+    if (edit.changed.length === 0) {
+        return NextResponse.json({ success: true, unchanged: true, subject: edit.subject, body: edit.body });
+    }
+
+    // Everything else in the stored action (recipients, `to`) is carried over as is.
+    const nextArgs = { ...stored, subject: edit.subject, body: edit.body };
+
+    // Guarded on status again: if the action was approved or rejected between the
+    // read above and this write, nothing is saved and the person is told so.
+    const { data: updated, error: updateError } = await supabase
+        .from("pending_actions")
+        .update({ proposed_args: nextArgs })
+        .eq("id", id)
+        .eq("status", "pending")
+        .select("id");
+
+    if (updateError) {
+        console.error("[actions] failed to save draft edit:", updateError);
+        return NextResponse.json(
+            { error: "I couldn't save the edit, so the draft is unchanged." },
+            { status: 500 }
+        );
+    }
+
+    if (!updated || updated.length === 0) {
+        return NextResponse.json(
+            { error: "This action was resolved while you were editing, so the edit wasn't saved." },
+            { status: 409 }
+        );
+    }
+
+    await writeTrace({
+        trace_id: pending.trace_id,
+        step: "permission_check",
+        tool_name: pending.tool_name as ToolName,
+        input: { event: "human_edit", fields: edit.changed },
+        output: {
+            before: { subject: stored.subject, body: stored.body },
+            after: { subject: edit.subject, body: edit.body },
+        },
+        status: "success",
+        latency_ms: 0,
+    });
+
+    return NextResponse.json({
+        success: true,
+        unchanged: false,
+        changed: edit.changed,
+        subject: edit.subject,
+        body: edit.body,
+    });
 }
