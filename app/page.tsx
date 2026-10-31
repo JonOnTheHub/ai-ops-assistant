@@ -26,6 +26,7 @@ import {
 } from "@phosphor-icons/react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+import { DraftEditor, type DraftEditorState } from "@/components/DraftEditor";
 import type { ErrorInfo, ErrorKind } from "@/types/errors";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -616,6 +617,8 @@ function ApprovalCard({
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [resultMessage, setResultMessage] = useState<string | null>(null);
   const [failureInfo, setFailureInfo] = useState<ErrorInfo | null>(null);
+  // Reported by DraftEditor: unsaved edits or a save in flight turn Approve off.
+  const [draftState, setDraftState] = useState<DraftEditorState>({ editing: false, saving: false });
 
   const handle = async (decision: "approve" | "reject") => {
     setStatus(decision === "approve" ? "approving" : "rejecting");
@@ -764,17 +767,14 @@ function ApprovalCard({
               </span>
             </div>
           )}
-          {args.subject && (
-            <div className="text-neutral-400">
-              <span className="text-neutral-600 uppercase text-[10px] tracking-wider">Subject </span>
-              <span className="text-neutral-200">{args.subject}</span>
-            </div>
-          )}
-          {args.body && (
-            <div className="text-neutral-400 text-xs bg-neutral-950 p-3 leading-relaxed border border-neutral-800 mt-2">
-              {args.body}
-            </div>
-          )}
+          <DraftEditor
+            actionId={action.id}
+            toolName={action.toolName}
+            subject={args.subject}
+            body={args.body}
+            locked={status !== "idle"}
+            onStateChange={setDraftState}
+          />
         </div>
 
         {status !== "done" && errorMessage && (
@@ -833,7 +833,7 @@ function ApprovalCard({
           <div className="flex gap-2">
             <button
               onClick={() => handle("approve")}
-              disabled={status !== "idle"}
+              disabled={status !== "idle" || draftState.editing || draftState.saving}
               className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-yellow-400 border border-yellow-400 text-black text-xs font-bold uppercase tracking-wider hover:bg-yellow-300 active:scale-[0.98] transition-all disabled:opacity-50 font-mono"
             >
               <CheckCircle size={13} weight="fill" />
@@ -841,7 +841,7 @@ function ApprovalCard({
             </button>
             <button
               onClick={() => handle("reject")}
-              disabled={status !== "idle"}
+              disabled={status !== "idle" || draftState.saving}
               className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-black border border-neutral-700/60 text-neutral-400 text-xs font-bold uppercase tracking-wider hover:border-neutral-500 hover:text-neutral-200 active:scale-[0.98] transition-all disabled:opacity-50 font-mono"
             >
               <XCircle size={13} weight="fill" />
