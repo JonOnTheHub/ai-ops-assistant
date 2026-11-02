@@ -127,11 +127,11 @@ Black and wasp yellow, brutalist geometry, utilitarian restraint — sharp corne
 
 ### AI
 
-- Groq — Llama 3.3 70B, tool calling, streaming
+- Groq — `openai/gpt-oss-120b`, tool calling, streaming
 
 ### Embeddings
 
-- Voyage AI — `voyage-3-lite`, 1024 dimensions
+- Voyage AI — `voyage-3-lite`, 512 dimensions
 
 ### Database
 
@@ -154,7 +154,7 @@ Similarity search is powered by two pgvector functions — knowledge base retrie
 # Known Limitations (documented, not hidden)
 
 - **No `updateLead` or `getLeads` tool.** Out of scope for the assigned 5-tool spec. During testing this surfaced a real hallucination case — the model claimed a lead update succeeded when no tool existed to perform it. Fixed with an explicit system-prompt honesty constraint requiring the agent to disclose capability gaps rather than simulate success. The underlying tool gap was left unresolved by design.
-- **No authentication.** Anyone with the URL can currently approve pending actions, including sending real emails. Flagged plainly rather than silently omitted — this is the clearest next step before any real deployment.
+- **Single shared password auth.** There are no individual user accounts or roles; anyone with the shared password can approve pending actions, including sending real emails.
 
 ---
 
