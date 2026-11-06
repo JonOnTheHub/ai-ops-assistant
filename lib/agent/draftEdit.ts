@@ -21,6 +21,10 @@ const EDITABLE_TOOLS = new Set(["sendEmail", "sendBroadcast"]);
 const EDITABLE_FIELDS = new Set(["subject", "body"]);
 const RECIPIENT_FIELDS = new Set(["to", "recipients"]);
 
+export function isEditableTool(toolName: string): boolean {
+    return EDITABLE_TOOLS.has(toolName);
+}
+
 export type DraftField = "subject" | "body";
 
 export type DraftEdit =
