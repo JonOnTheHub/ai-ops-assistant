@@ -1,8 +1,19 @@
 "use client";
 
-import { useState, type KeyboardEvent } from "react";
+import { useState, type KeyboardEvent, type SyntheticEvent } from "react";
 import { PencilSimple, FloppyDisk, ArrowCounterClockwise } from "@phosphor-icons/react";
 import { SUBJECT_MAX, BODY_MAX } from "@/lib/agent/draftEdit";
+// Browser-safe only: refine.ts pulls in the Groq SDK and must never be imported here.
+import {
+    REFINE_ACTIONS,
+    REFINE_LABELS,
+    SELECTION_MAX,
+    CONTEXT_MAX,
+    trimSelection,
+    describeFactChange,
+    type RefineAction,
+    type FactCheck,
+} from "@/lib/agent/refineShared";
 
 // Edit the subject and body of a pending email or broadcast before approving.
 //
@@ -23,6 +34,17 @@ export interface DraftEditorState {
 interface Draft {
     subject: string;
     body: string;
+}
+
+// A rewrite waiting for the person to Replace or Dismiss it. Nothing is applied
+// until they choose, and `original` lets Replace check the text underneath hasn't changed.
+interface Suggestion {
+    action: RefineAction;
+    start: number;
+    end: number;
+    original: string;
+    text: string;
+    facts: FactCheck | null;
 }
 
 interface DraftEditorProps {
@@ -48,6 +70,13 @@ export function DraftEditor({ actionId, toolName, subject, body, locked, onState
     const [saving, setSaving] = useState(false);
     const [error, setError] = useState<string | null>(null);
     const [note, setNote] = useState<string | null>(null);
+    // Selection actions: the highlighted range, a rewrite in flight, the suggestion
+    // waiting for Replace or Dismiss, and the last failure.
+    const [selection, setSelection] = useState<{ start: number; end: number } | null>(null);
+    const [refining, setRefining] = useState<RefineAction | null>(null);
+    const [suggestion, setSuggestion] = useState<Suggestion | null>(null);
+    const [refineError, setRefineError] = useState<string | null>(null);
+    const [lastAction, setLastAction] = useState<RefineAction | null>(null);
 
     const canEdit = EDITABLE_TOOLS.includes(toolName) && typeof subject === "string" && typeof body === "string";
     const isEditing = editing && !locked;
@@ -60,12 +89,32 @@ export function DraftEditor({ actionId, toolName, subject, body, locked, onState
     const bodyLength = draft.body.trim().length;
     const subjectProblem = subjectLength === 0 ? "The subject can't be empty." : subjectLength > SUBJECT_MAX ? `The subject is ${subjectLength - SUBJECT_MAX} characters too long.` : null;
     const bodyProblem = bodyLength === 0 ? "The message can't be empty." : bodyLength > BODY_MAX ? `The message is ${bodyLength - BODY_MAX} characters too long.` : null;
-    const canSave = !saving && dirty && !subjectProblem && !bodyProblem;
+    // While a rewrite is in flight or waiting for a decision, the text is frozen and
+    // Save is off, so the offsets the suggestion refers to can't go stale.
+    const refineBusy = Boolean(refining || suggestion);
+    const canSave = !saving && !refineBusy && dirty && !subjectProblem && !bodyProblem;
+
+    const selectedLength = selection ? selection.end - selection.start : 0;
+    const selectionTooLong = selectedLength > SELECTION_MAX;
+    const factWarning = suggestion
+        ? suggestion.facts
+            ? describeFactChange(suggestion.facts)
+            : "Couldn't check whether numbers or addresses changed. Read the rewrite carefully."
+        : null;
+
+    const clearRefine = () => {
+        setSelection(null);
+        setRefining(null);
+        setSuggestion(null);
+        setRefineError(null);
+        setLastAction(null);
+    };
 
     const startEdit = () => {
         setDraft(saved);
         setError(null);
         setNote(null);
+        clearRefine();
         setEditing(true);
         onStateChange({ editing: true, saving: false });
     };
@@ -75,6 +124,7 @@ export function DraftEditor({ actionId, toolName, subject, body, locked, onState
         setEditing(false);
         setDraft(saved);
         setError(null);
+        clearRefine();
         onStateChange({ editing: false, saving: false });
     };
 
@@ -136,12 +186,105 @@ export function DraftEditor({ actionId, toolName, subject, body, locked, onState
 
             setSaved(next);
             setDraft(next);
+            clearRefine();
             setEditing(false);
             setSaving(false);
             onStateChange({ editing: false, saving: false });
         } catch {
             failed("Couldn't reach the server, so the edit may not have been saved. Check your connection and try again.");
         }
+    };
+
+    const onBodySelect = (event: SyntheticEvent<HTMLTextAreaElement>) => {
+        if (refineBusy) return;
+        const target = event.currentTarget;
+        setSelection(trimSelection(draft.body, target.selectionStart, target.selectionEnd));
+    };
+
+    const runRefine = async (action: RefineAction) => {
+        if (!selection || refining) return;
+
+        const { start, end } = selection;
+        const original = draft.body.slice(start, end);
+        if (original.length > SELECTION_MAX) return;
+
+        setSuggestion(null);
+        setRefining(action);
+        setLastAction(action);
+        setRefineError(null);
+
+        const failed = (message: string) => {
+            setRefineError(message);
+            setRefining(null);
+        };
+
+        try {
+            const res = await fetch(`/api/actions/${actionId}/refine`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    action,
+                    selection: original,
+                    before: draft.body.slice(Math.max(0, start - CONTEXT_MAX), start),
+                    after: draft.body.slice(end, end + CONTEXT_MAX),
+                }),
+            });
+
+            const isJson = (res.headers.get("content-type") ?? "").includes("application/json");
+
+            if (!isJson) {
+                failed(
+                    res.status === 404
+                        ? "The rewrite endpoint wasn't found (HTTP 404). Restart the server or redeploy, then try again."
+                        : `The server sent an unexpected response (HTTP ${res.status}), so there is no suggestion. Try again.`
+                );
+                return;
+            }
+
+            const data = await res.json();
+
+            if (!res.ok || typeof data.suggestion !== "string") {
+                failed(typeof data.error === "string" ? data.error : "I couldn't get a suggestion. Try again.");
+                return;
+            }
+
+            setSuggestion({
+                action,
+                start,
+                end,
+                original,
+                text: data.suggestion,
+                facts: data.facts && typeof data.facts.changed === "boolean" ? data.facts : null,
+            });
+            setRefining(null);
+        } catch {
+            failed("Couldn't reach the server, so there is no suggestion. Check your connection and try again.");
+        }
+    };
+
+    const replaceSelection = () => {
+        if (!suggestion) return;
+
+        // The text is frozen while a suggestion is open, but check anyway: applying
+        // a rewrite over text that has since changed would corrupt the draft.
+        if (draft.body.slice(suggestion.start, suggestion.end) !== suggestion.original) {
+            setRefineError("The text changed since this suggestion was made, so I haven't applied it. Select the passage again.");
+            setSuggestion(null);
+            setSelection(null);
+            return;
+        }
+
+        setDraft({ ...draft, body: draft.body.slice(0, suggestion.start) + suggestion.text + draft.body.slice(suggestion.end) });
+        setSuggestion(null);
+        setSelection(null);
+        setLastAction(null);
+        setRefineError(null);
+    };
+
+    const dismissSuggestion = () => {
+        setSuggestion(null);
+        setSelection(null);
+        setLastAction(null);
     };
 
     const onKeyDown = (event: KeyboardEvent<HTMLInputElement | HTMLTextAreaElement>) => {
@@ -220,15 +363,105 @@ export function DraftEditor({ actionId, toolName, subject, body, locked, onState
                     value={draft.body}
                     rows={9}
                     disabled={saving}
-                    onChange={(e) => setDraft({ ...draft, body: e.target.value })}
+                    readOnly={refineBusy}
+                    onSelect={onBodySelect}
+                    onChange={(e) => {
+                        setDraft({ ...draft, body: e.target.value });
+                        setSelection(null);
+                    }}
                     onKeyDown={onKeyDown}
                     className={`${FIELD} resize-y`}
                 />
                 {bodyProblem && <div className="text-[10px] text-red-400 font-mono mt-1">{bodyProblem}</div>}
+
+                {selection && !refineBusy && (
+                    <div role="toolbar" aria-label="Rewrite selected text" className="mt-2 flex flex-wrap items-center gap-2">
+                        <span className="text-[10px] text-neutral-500 font-mono">{selectedLength} selected</span>
+                        {REFINE_ACTIONS.map((action) => (
+                            <button
+                                key={action}
+                                type="button"
+                                disabled={selectionTooLong || saving}
+                                onClick={() => void runRefine(action)}
+                                className="px-2 py-1 rounded-md bg-black border border-neutral-700/60 text-neutral-300 text-[10px] font-bold uppercase tracking-wider hover:border-yellow-400/60 hover:text-neutral-100 transition-all disabled:opacity-40 font-mono"
+                            >
+                                {REFINE_LABELS[action]}
+                            </button>
+                        ))}
+                        {selectionTooLong && (
+                            <span className="text-[10px] text-red-400 font-mono">Selection too long (max {SELECTION_MAX}). Select a shorter passage.</span>
+                        )}
+                    </div>
+                )}
+
+                {refining && (
+                    <div role="status" className="mt-2 text-[10px] text-neutral-500 font-mono">
+                        Rewriting ({REFINE_LABELS[refining].toLowerCase()})...
+                    </div>
+                )}
+
+                {refineError && !refining && (
+                    <div role="alert" className="mt-2 text-[10px] text-red-400/80 font-mono bg-red-950/30 border border-red-900 p-2 leading-relaxed">
+                        {refineError}
+                        {lastAction && selection && (
+                            <button
+                                type="button"
+                                onClick={() => void runRefine(lastAction)}
+                                className="ml-2 underline underline-offset-2 uppercase tracking-wider text-red-300 hover:text-red-100"
+                            >
+                                Try again
+                            </button>
+                        )}
+                    </div>
+                )}
+
+                {suggestion && (
+                    <div role="region" aria-label="Suggested rewrite" className="mt-2 space-y-2 border border-neutral-700/60 bg-black p-3 rounded-lg">
+                        <div className="text-[10px] text-neutral-500 font-mono uppercase tracking-wider">
+                            Suggested rewrite ({REFINE_LABELS[suggestion.action]})
+                        </div>
+                        <div>
+                            <div className={LABEL}>Before</div>
+                            <div className="text-xs text-neutral-400 font-mono whitespace-pre-wrap leading-relaxed">{suggestion.original}</div>
+                        </div>
+                        <div>
+                            <div className={LABEL}>After</div>
+                            <div className="text-xs text-neutral-100 font-mono whitespace-pre-wrap leading-relaxed">{suggestion.text}</div>
+                        </div>
+                        {factWarning && (
+                            <div role="note" className="text-[10px] text-yellow-400/90 font-mono bg-yellow-400/5 border border-yellow-400/30 p-2 leading-relaxed">
+                                {factWarning}
+                            </div>
+                        )}
+                        <div className="flex items-center gap-2">
+                            <button
+                                type="button"
+                                onClick={replaceSelection}
+                                className="px-3 py-1.5 rounded-lg bg-neutral-100 border border-neutral-100 text-black text-xs font-bold uppercase tracking-wider hover:bg-white active:scale-[0.98] transition-all font-mono"
+                            >
+                                Replace
+                            </button>
+                            <button
+                                type="button"
+                                onClick={dismissSuggestion}
+                                className="px-3 py-1.5 rounded-lg bg-black border border-neutral-700/60 text-neutral-400 text-xs font-bold uppercase tracking-wider hover:border-neutral-500 hover:text-neutral-200 transition-all font-mono"
+                            >
+                                Dismiss
+                            </button>
+                            <button
+                                type="button"
+                                onClick={() => void runRefine(suggestion.action)}
+                                className="text-[10px] text-neutral-500 hover:text-neutral-200 font-mono uppercase tracking-wider transition-colors"
+                            >
+                                Try again
+                            </button>
+                        </div>
+                    </div>
+                )}
             </div>
 
             <div className="text-[10px] text-neutral-600 font-mono leading-relaxed">
-                Recipients can&apos;t be edited here. Emails send as plain text. Approve is off until you save or cancel.
+                Select text in the message to rewrite it. Recipients can&apos;t be edited here. Emails send as plain text. Approve is off until you save or cancel.
             </div>
 
             {error && (

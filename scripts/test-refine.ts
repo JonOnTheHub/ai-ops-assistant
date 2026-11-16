@@ -2,7 +2,7 @@
 // REST layer are stubbed. No env file, no network. Run:
 //   npx tsx scripts/test-refine.ts
 
-export { };
+export {};
 
 process.env.SUPABASE_URL = "http://supabase.test";
 process.env.SUPABASE_SERVICE_ROLE_KEY = "test-key";
@@ -124,6 +124,27 @@ async function main() {
     check("a NEW number the model invented is flagged as added", facts("Please reply soon.", "Please reply within 2 hours.").added.join() === "2");
     check("rewording with no facts in it is not flagged", !facts("Please send the report.", "Kindly send us the report.").changed);
     check("repeated facts are counted, so dropping one of two is caught", facts("Send 5 now and 5 later.", "Send 5 now.").changed);
+
+    // ── 4b. The browser-safe helpers the card uses ────────────────────────────
+    const shared = await import("@/lib/agent/refineShared");
+    const text = "Hi Grace,\n\nPlease send the report.\n\nThanks";
+    const word = shared.trimSelection(text, text.indexOf("Please"), text.indexOf("Please") + 6);
+    check("trimSelection returns the exact range for a clean selection", word?.start === text.indexOf("Please") && word?.end === text.indexOf("Please") + 6, word);
+    const padded = shared.trimSelection(text, text.indexOf("Please") - 2, text.indexOf("report.") + 7 + 2);
+    check("trimSelection pulls the range in off surrounding whitespace and newlines", text.slice(padded!.start, padded!.end) === "Please send the report.", padded);
+    check("trimSelection works for a backwards selection", shared.trimSelection(text, 12, 4) !== null && shared.trimSelection(text, 12, 4)!.start < shared.trimSelection(text, 12, 4)!.end);
+    check("trimSelection gives null for whitespace only (the two newlines), or for nothing", shared.trimSelection(text, 9, 11) === null && shared.trimSelection(text, 5, 5) === null, shared.trimSelection(text, 9, 11));
+    check("trimSelection never runs past the text", shared.trimSelection("abc", 1, 99)?.end === 3);
+    check("the button labels cover every action and match the five fixed actions", shared.REFINE_ACTIONS.every((a) => typeof shared.REFINE_LABELS[a] === "string") && shared.REFINE_ACTIONS.length === 5);
+    check("describeFactChange is silent when nothing changed", shared.describeFactChange({ changed: false, removed: [], added: [] }) === null);
+    const warned = shared.describeFactChange({ changed: true, removed: ["48"], added: ["24"] }) ?? "";
+    check("describeFactChange names what was removed and added", /Check this/.test(warned) && /removed 48/.test(warned) && /added 24/.test(warned), warned);
+    const removedOnly = shared.describeFactChange({ changed: true, removed: ["₦450000"], added: [] }) ?? "";
+    const addedOnly = shared.describeFactChange({ changed: true, removed: [], added: ["2"] }) ?? "";
+    check("describeFactChange: removed-only mentions only the removal", /removed ₦450000/.test(removedOnly) && !/added/.test(removedOnly), removedOnly);
+    check("describeFactChange: added-only mentions only the addition", /added 2/.test(addedOnly) && !/removed/.test(addedOnly), addedOnly);
+    check("the server's limits and the browser's are the same numbers", refine.SELECTION_MAX === shared.SELECTION_MAX && refine.CONTEXT_MAX === shared.CONTEXT_MAX && refine.SUGGESTION_MAX === shared.SUGGESTION_MAX);
+    check("the browser-safe file does not import the Groq SDK or anything server-side", !/groq-sdk|supabase|process\.env/.test(await (await import("node:fs/promises")).readFile(new URL("../lib/agent/refineShared.ts", import.meta.url), "utf8")));
 
     // ── 5. The real endpoint ──────────────────────────────────────────────────
     const call = async (payload: unknown, id = "act-1") => {

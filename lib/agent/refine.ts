@@ -10,12 +10,20 @@ import { toPlainText } from "./draftText";
 // the person can Replace or Dismiss, and it only becomes part of the draft
 // through the normal Save, which goes through lib/agent/draftEdit.ts.
 
-export const REFINE_ACTIONS = ["improve", "shorten", "grammar", "formal", "friendly"] as const;
-export type RefineAction = (typeof REFINE_ACTIONS)[number];
+import {
+    REFINE_ACTIONS,
+    SELECTION_MAX,
+    CONTEXT_MAX,
+    SUGGESTION_MAX,
+    type RefineAction,
+    type FactCheck,
+} from "./refineShared";
 
-export const SELECTION_MAX = 2000;
-export const CONTEXT_MAX = 400;
-export const SUGGESTION_MAX = 4000;
+// The constants and types live in refineShared.ts so the browser can use them
+// without pulling in the Groq SDK. Re-exported here so server code and tests
+// keep importing everything from one place.
+export { REFINE_ACTIONS, SELECTION_MAX, CONTEXT_MAX, SUGGESTION_MAX };
+export type { RefineAction, FactCheck };
 
 const INSTRUCTIONS: Record<RefineAction, string> = {
     improve: "Improve the clarity and flow of the passage. Keep the meaning, every fact, and roughly the same length.",
@@ -112,12 +120,6 @@ export function cleanSuggestion(raw: string, original: string): string {
 // and links are pulled out of both versions and compared. A difference is a
 // WARNING for the person to look at, never a block: "forty-eight hours" for
 // "48 hours" is harmless but also shows up here, and a person can judge that.
-
-export interface FactCheck {
-    changed: boolean;
-    removed: string[];
-    added: string[];
-}
 
 const DAYS = "monday|tuesday|wednesday|thursday|friday|saturday|sunday";
 const MONTHS = "january|february|march|april|may|june|july|august|september|october|november|december";
