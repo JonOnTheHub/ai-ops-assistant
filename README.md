@@ -165,3 +165,37 @@ A warrant is permission that has to be earned before an action proceeds. That is
 ---
 
 Built as **Project #3** in an AI systems curriculum focused on tool calling, observability, constrained agents, human approval workflows, and production-oriented AI system design.
+
+## Local customer-support escalation
+
+With Node 24 and npm, run these commands from the project root:
+
+```sh
+npm ci
+npm run demo:support
+npm run eval:support
+```
+
+The terminal shows Rae Vale's internal follow-up and proposed email. Type
+`approve` to deliver it to the in-memory outbox. Any other answer rejects it.
+The command prints the trace and outbox. Every run starts fresh. Only dependency
+installation needs network access.
+
+A deterministic four-tool plan uses the application's executor, retrieval,
+customer lookup, task creation, approval handler, and email implementation.
+The fixture in `scripts/support/fixture.mjs` intercepts service requests
+in this process. No credentials or database setup are needed.
+
+The eight evals cover success, weak policy evidence (open a clarification task),
+CRM failure, rejection, repeated approval, concurrent approval, transport failure,
+and draft queue failure. Approval now claims a pending row before dispatch.
+Replaying it receives HTTP 409. Trace events distinguish drafting, approval,
+delivery, rejection and failure. An interrupted dispatch can leave an approved
+row without a delivery outcome; check delivery before creating another action.
+
+Verification on Node 24: eight evals and all fifteen existing test scripts
+passed after fixing an editor assertion that could run before Save completed
+and updating the edit-endpoint fixture to return the claimed row. TypeScript
+passed. ESLint reported two pre-existing unused bindings. The Next build
+requires service configuration and passed with placeholder values. Live
+planning, hosted storage, and real email delivery were outside the offline run.

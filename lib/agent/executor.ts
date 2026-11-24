@@ -102,8 +102,12 @@ export async function executeTool(
       .select()
       .single();
 
-    if (error) {
-      console.error("[executor] failed to create pending action:", error);
+    if (error || !pending?.id) {
+      const result = { success: false, error: "Could not queue draft for approval." };
+      const errorInfo = classifyToolResult(toolName, result);
+      await writeTrace({ trace_id, step: "tool_call", tool_name: toolName, input: args,
+        output: { ...result, errorInfo }, status: "error", latency_ms: 0 });
+      return { type: "result", toolName, result, errorInfo, latency_ms: 0 };
     }
 
     await writeTrace({
@@ -111,13 +115,14 @@ export async function executeTool(
       step: "tool_call",
       tool_name: toolName,
       input: args,
+      output: { event: "drafted", actionId: pending.id },
       status: "pending_approval",
       latency_ms: 0,
     });
 
     return {
       type: "pending",
-      pendingActionId: pending?.id ?? "unknown",
+      pendingActionId: pending.id,
       toolName,
       args,
     };

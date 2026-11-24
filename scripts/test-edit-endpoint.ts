@@ -81,7 +81,8 @@ globalThis.fetch = (async (input: unknown, init?: RequestInit) => {
         const changes = JSON.parse(String(init?.body ?? "{}"));
         if (db.row && matches(db.row, url.searchParams)) {
             Object.assign(db.row, changes);
-            return json(200, [{ id: db.row.id }]);
+            const row = url.searchParams.get("select") === "*" ? db.row : { id: db.row.id };
+            return json(200, wantsObject ? row : [row]);
         }
         return json(200, []);
     }

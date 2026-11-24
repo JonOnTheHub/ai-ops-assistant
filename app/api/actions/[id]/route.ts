@@ -34,33 +34,27 @@ export async function POST(
         return NextResponse.json({ error: "Invalid action" }, { status: 400 });
     }
 
-    // Fetch the pending action
-    const { data: pending, error: fetchError } = await supabase
+    // Claim the stored draft before any side effect. Only one resolver can
+    // match pending, even when approve, reject or edit requests overlap.
+    const status = action === "approve" ? "approved" : "rejected";
+    const { data: pending, error } = await supabase
         .from("pending_actions")
-        .select("*")
+        .update({ status, resolved_at: new Date().toISOString() })
         .eq("id", id)
         .eq("status", "pending")
-        .single();
+        .select("*")
+        .maybeSingle();
 
-    if (fetchError || !pending) {
-        return NextResponse.json(
-            { error: "Pending action not found or already resolved" },
-            { status: 404 }
-        );
-    }
+    if (error) return NextResponse.json({ error: "Could not resolve draft" }, { status: 500 });
+    if (!pending) return NextResponse.json({ error: "Draft missing or already resolved" }, { status: 409 });
 
     if (action === "reject") {
-        await supabase
-            .from("pending_actions")
-            .update({ status: "rejected", resolved_at: new Date().toISOString() })
-            .eq("id", id);
-
         await writeTrace({
             trace_id: pending.trace_id,
             step: "tool_call",
             tool_name: pending.tool_name as ToolName,
             input: pending.proposed_args,
-            output: { rejected: true },
+            output: { rejected: true, event: "rejected", actionId: id },
             status: "error",
             latency_ms: 0,
         });
@@ -78,6 +72,15 @@ export async function POST(
         );
     }
 
+    await writeTrace({
+        trace_id: pending.trace_id,
+        step: "permission_check",
+        tool_name: pending.tool_name,
+        input: { actionId: id },
+        output: { event: "approved" },
+        status: "success",
+        latency_ms: 0,
+    });
     const start = Date.now();
 
     try {
@@ -92,11 +95,6 @@ export async function POST(
         // results[] sendBroadcast already returns — no tool change needed.
         const errorInfo = classifyToolResult(pending.tool_name as ToolName, result);
 
-        await supabase
-            .from("pending_actions")
-            .update({ status: "approved", resolved_at: new Date().toISOString() })
-            .eq("id", id);
-
         await writeTrace({
             trace_id: pending.trace_id,
             step: "tool_call",
@@ -105,6 +103,8 @@ export async function POST(
             output: {
                 ...(result as unknown as Record<string, unknown>),
                 ...(errorInfo ? { errorInfo } : {}),
+                actionId: id,
+                event: errorInfo?.kind === "partial_success" ? "partial_success" : result.success && !errorInfo ? "sent" : "failed",
             },
             // Same rule as executor.ts: success:true with a routed error
             // attached (partial_success) is not a clean success in the trace.
@@ -117,16 +117,19 @@ export async function POST(
         // Both sendEmail and sendBroadcast catch their own errors and return
         // {success:false} rather than throwing — so reaching this block means
         // something outside the tool itself broke (Resend SDK throwing
-        // synchronously, a genuine bug). Nothing from this tool executed
-        // (the tool never got to return), so a retry is safe.
-        const errorInfo = classifyThrown(err, { completedTools: [] });
+        // synchronously, a genuine bug). Delivery may be ambiguous.
+        const errorInfo = {
+            ...classifyThrown(err, { completedTools: [] }),
+            retryable: false,
+            summary: "Execution failed after approval. Check delivery before attempting another send.",
+        };
 
         await writeTrace({
             trace_id: pending.trace_id,
             step: "tool_call",
             tool_name: pending.tool_name as ToolName,
             input: pending.proposed_args,
-            output: { error: String(err), errorInfo },
+            output: { event: "failed", actionId: id, error: String(err), errorInfo },
             status: "error",
             latency_ms: Date.now() - start,
         });

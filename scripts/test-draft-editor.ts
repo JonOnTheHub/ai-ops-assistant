@@ -182,7 +182,10 @@ async function main() {
     typeBody("Please send the report within 48 hours.");
     check("typing enables Save", saveButton().disabled === false);
     fireEvent.click(saveButton());
-    await waitFor(() => screen.getByText("Please send the report within 48 hours."));
+    await waitFor(() => {
+        if (screen.queryByRole("textbox")) throw new Error("Save still in progress");
+        screen.getByText("Please send the report within 48 hours.");
+    });
     check("exactly one PATCH was sent, to this action", net.sent.length === 1 && net.sent[0].method === "PATCH" && net.sent[0].url === "/api/actions/act-1", net.sent);
     check("only the CHANGED field was sent (no subject, no recipients)", JSON.stringify(Object.keys(net.sent[0].body)) === JSON.stringify(["body"]), net.sent[0].body);
     check("after saving it leaves edit mode and shows the new text", screen.queryAllByRole("textbox").length === 0);

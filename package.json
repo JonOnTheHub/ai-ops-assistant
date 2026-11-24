@@ -6,7 +6,9 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "demo:support": "tsx scripts/support/demo.mjs",
+    "eval:support": "tsx --test scripts/support/eval.mjs"
   },
   "dependencies": {
     "@ai-sdk/groq": "^4.0.5",
